@@ -1,0 +1,42 @@
+{
+  "_comment": "This is a starter/minimal SDXL workflow used by Lorelai's camera code. The C# code loads and mutates it at runtime (checkpoint, positive/negative prompt, seed, resolution, etc.). You can replace the contents of this file with a real export from ComfyUI (right-click the canvas or use the 'Save (API Format)' option after building a simple txt2img graph that uses your cyberrealisticPony checkpoint). Keep the same general node structure or update the node ids in Program.cs if you change them.",
+  "1": {
+    "inputs": { "ckpt_name": "cyberrealisticPony_v180Coreshift.safetensors" },
+    "class_type": "CheckpointLoaderSimple"
+  },
+  "4": {
+    "inputs": { "text": "", "clip": ["1", 1] },
+    "class_type": "CLIPTextEncode"
+  },
+  "5": {
+    "inputs": { "text": "", "clip": ["1", 1] },
+    "class_type": "CLIPTextEncode"
+  },
+  "3": {
+    "inputs": { "width": 832, "height": 1216, "batch_size": 1 },
+    "class_type": "EmptyLatentImage"
+  },
+  "6": {
+    "inputs": {
+      "seed": 0,
+      "steps": 28,
+      "cfg": 4,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["1", 0],
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["3", 0]
+    },
+    "class_type": "KSampler"
+  },
+  "7": {
+    "inputs": { "samples": ["6", 0], "vae": ["1", 2] },
+    "class_type": "VAEDecode"
+  },
+  "8": {
+    "inputs": { "filename_prefix": "Lorelai", "images": ["7", 0] },
+    "class_type": "SaveImage"
+  }
+}
