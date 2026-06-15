@@ -1,0 +1,157 @@
+import json
+
+workflow = {
+  "last_node_id": 11,
+  "last_link_id": 10,
+  "nodes": [
+    {
+      "id": 4,
+      "type": "CheckpointLoaderSimple",
+      "pos": [50, 200],
+      "size": [315, 98],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "MODEL", "type": "MODEL", "links": [1]},
+        {"name": "CLIP", "type": "CLIP", "links": [3, 4]},
+        {"name": "VAE", "type": "VAE", "links": [9]}
+      ],
+      "widgets_values": ["cyberrealisticPony_v180Coreshift.safetensors"]
+    },
+    {
+      "id": 10,
+      "type": "ADE_AnimateDiffLoaderWithContext",
+      "pos": [450, 100],
+      "size": [315, 120],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {"name": "model", "type": "MODEL", "link": 1}
+      ],
+      "outputs": [
+        {"name": "MODEL", "type": "MODEL", "links": [2]}
+      ],
+      "widgets_values": ["mm_sdxl_v10_beta.safetensors", ""]
+    },
+    {
+      "id": 6,
+      "type": "CLIPTextEncode",
+      "pos": [450, 300],
+      "size": [400, 200],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "clip", "type": "CLIP", "link": 3}
+      ],
+      "outputs": [
+        {"name": "CONDITIONING", "type": "CONDITIONING", "links": [5]}
+      ],
+      "widgets_values": ["score_9, score_8_up, score_7_up, score_6_up, source_photo, raw analog photography, highly detailed, A drop-dead gorgeous young Caucasian woman with extremely pale flawless porcelain skin and a slender build, real human skin texture, pores, hyperrealistic. She has dark brunette hair styled up in a messy bun with long face-framing curtain bangs on the sides of her face. Oval slightly heart-shaped face, high cheekbones, delicate slightly upturned nose dusted with subtle blush. Large striking bright piercing blue eyes, sharp smoky winged eyeliner. Exceptionally full pillowy lips, matte peachy-nude tint. She is wearing large silver hoop earrings and a delicate gold necklace. Cinematic lighting, full body shot, taking a selfie in a gym mirror, wearing pink yoga pants and a sports bra, bright fluorescent lighting"]
+    },
+    {
+      "id": 7,
+      "type": "CLIPTextEncode",
+      "pos": [450, 550],
+      "size": [400, 200],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {"name": "clip", "type": "CLIP", "link": 4}
+      ],
+      "outputs": [
+        {"name": "CONDITIONING", "type": "CONDITIONING", "links": [6]}
+      ],
+      "widgets_values": ["score_4, score_5, score_6, deformed, bad anatomy, extra limbs, blurry, lowres, text, watermark, signature, censored, ugly, poorly drawn face, mutation, extra fingers, sunglasses, glasses, straight bangs, blunt bangs, hispanic, latina, dark skin, tan, clothes, fully dressed"]
+    },
+    {
+      "id": 5,
+      "type": "EmptyLatentImage",
+      "pos": [450, 800],
+      "size": [315, 106],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "LATENT", "type": "LATENT", "links": [7]}
+      ],
+      "widgets_values": [832, 1216, 16]
+    },
+    {
+      "id": 3,
+      "type": "KSampler",
+      "pos": [950, 300],
+      "size": [315, 262],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {"name": "model", "type": "MODEL", "link": 2},
+        {"name": "positive", "type": "CONDITIONING", "link": 5},
+        {"name": "negative", "type": "CONDITIONING", "link": 6},
+        {"name": "latent_image", "type": "LATENT", "link": 7}
+      ],
+      "outputs": [
+        {"name": "LATENT", "type": "LATENT", "links": [8]}
+      ],
+      "widgets_values": [155550208, True, 25, 5.0, "euler", "normal", 1.0]
+    },
+    {
+      "id": 8,
+      "type": "VAEDecode",
+      "pos": [1350, 300],
+      "size": [210, 46],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"name": "samples", "type": "LATENT", "link": 8},
+        {"name": "vae", "type": "VAE", "link": 9}
+      ],
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": [10]}
+      ],
+      "widgets_values": []
+    },
+    {
+      "id": 11,
+      "type": "VHS_VideoCombine",
+      "pos": [1650, 300],
+      "size": [315, 200],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 10}
+      ],
+      "outputs": [],
+      "widgets_values": [12.0, 0, "video/mp4", "lorelai_vid_", "", "", True, "", ""]
+    }
+  ],
+  "links": [
+    [1, 4, 0, 10, 0, "MODEL"],
+    [2, 10, 0, 3, 0, "MODEL"],
+    [3, 4, 1, 6, 0, "CLIP"],
+    [4, 4, 1, 7, 0, "CLIP"],
+    [5, 6, 0, 3, 1, "CONDITIONING"],
+    [6, 7, 0, 3, 2, "CONDITIONING"],
+    [7, 5, 0, 3, 3, "LATENT"],
+    [8, 3, 0, 8, 0, "LATENT"],
+    [9, 4, 2, 8, 1, "VAE"],
+    [10, 8, 0, 11, 0, "IMAGE"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}
+
+with open("lorelai_video_workflow.json", "w") as f:
+    json.dump(workflow, f, indent=2)
+
+print("Created lorelai_video_workflow.json")

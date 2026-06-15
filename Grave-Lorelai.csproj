@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -6,11 +6,16 @@
     <RootNamespace>Grave_Lorelai</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <ApplicationIcon>Lorelai.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="LLamaSharp" Version="0.27.0" />
-    <PackageReference Include="LLamaSharp.Backend.Cuda12" Version="0.27.0" />
+    <!-- Using direct Ollama HTTP /api/chat for text-gen-base (no local GGUF load in-process).
+         LLamaSharp removed to keep deps light and avoid pulling CUDA natives for unused backend. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.9" />
   </ItemGroup>
 
 </Project>

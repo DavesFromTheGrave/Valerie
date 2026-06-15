@@ -1,0 +1,36 @@
+# User-specific / Local files
+.env
+*.env
+!example.env
+Secrets.env
+/secrets/
+/keys/
+*.key
+*.pem
+config.local.*
+
+# .NET build directories
+bin/
+obj/
+*.user
+*.userosscache
+*.sln.docstates
+
+# Personal/local runtime files
+personal/
+data/*
+!data/README.md
+selfies/*
+!selfies/.gitkeep
+
+# Large binary environments and models
+img_gen/python_embeded/
+models/*.gguf
+models/*.bin
+models/llm_model.gguf
+
+# ComfyUI dynamic files
+img_gen/ComfyUI/input/
+img_gen/ComfyUI/output/
+img_gen/ComfyUI/models/
+img_gen/ComfyUI/temp/
