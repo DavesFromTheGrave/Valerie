@@ -37,7 +37,7 @@ copy example.env .env
 
 #### Configuration Keys:
 - `OLLAMA_HOST`: The endpoint where Ollama is running (defaults to `http://localhost:11434`).
-- `OLLAMA_MODEL`: Default model to use if no boot menu selection is made (e.g. `revenant/nsfw-v-8b:latest`).
+- `OLLAMA_MODEL`: Default model to use if no boot menu selection is made (e.g. `revenant/lorelai:latest`).
 - `GROK_TTS_API_KEY`: xAI API Key for cloud Ara voice. If left blank or commented out, the application automatically launches and runs the local Python voice-clone fallback.
 - `COMFYUI_URL`: The local endpoint for ComfyUI visual generation (defaults to `http://127.0.0.1:8188`).
 
@@ -96,8 +96,8 @@ img_gen/ComfyUI/temp/
 If running in **local fallback mode** (no `GROK_TTS_API_KEY` set), the application will start a local HTTP voice-cloning server in the background.
 
 To prepare the local TTS server:
-1. Ensure your reference voice WAV file is named `v_combined.wav` and placed in the `/personal/` folder:
-   `personal/v_combined.wav`
+1. Ensure your reference voice WAV file is named `lorelai_combined.wav` and placed in the `/personal/` folder:
+   `personal/lorelai_combined.wav`
 2. Ensure you have installed your voice synthesis library (e.g., `chatterbox-tts`) in your Python environment.
 3. The background process will boot [personal/tts_server.py](personal/tts_server.py) automatically on port `8190`.
 

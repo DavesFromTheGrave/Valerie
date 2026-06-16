@@ -110,7 +110,7 @@ namespace GraveLorelai
             if (isFirstBoot)
             {
                 // Play pre-recorded first-boot greeting.
-                // The audio MUST be sexy and sultry — low, breathy, confident, seductive, in V's "Digital Dame of Dark Desires" voice.
+                // The audio MUST be sexy and sultry — low, breathy, confident, seductive Lorelai delivery.
                 // Exact line to record (keep it short and teasing):
                 //   "Hey... what's your name?"
                 // Delivery: slow, intimate, slightly husky, with a little smile in the voice. Think sultry whisper that still carries.
@@ -259,7 +259,7 @@ namespace GraveLorelai
                 {
                     if (!string.IsNullOrEmpty(last_thinking))
                     {
-                        Console.WriteLine("\n--- V's thoughts ---\n" + last_thinking + "\n---\n");
+                        Console.WriteLine("\n--- Lorelai's thoughts ---\n" + last_thinking + "\n---\n");
                     }
                     else
                     {
@@ -454,9 +454,9 @@ namespace GraveLorelai
                 {
                     timestamp = DateTime.UtcNow.ToString("o"),
                     user = input,
-                    v = cleanSpoken,
+                    lorelai = cleanSpoken,
                     llm = $"ollama:{activeModel}",
-                    persona = "v-4.7.5-compressed (baked in model)"
+                    persona = "lorelai-genesis-v1.0"
                 };
                 File.AppendAllText(sessionFile, System.Text.Json.JsonSerializer.Serialize(logEntry) + Environment.NewLine);
 
@@ -704,7 +704,7 @@ namespace GraveLorelai
 
         static async Task<(string modelName, bool enableThinking)> SelectModelPromptAsync()
         {
-            string defaultModel = GetEnv("OLLAMA_MODEL", "revenant/nsfw-v-8b:latest");
+            string defaultModel = GetEnv("OLLAMA_MODEL", "revenant/lorelai:latest");
             bool defaultThinking = GetEnv("OLLAMA_THINK", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
             
             try
