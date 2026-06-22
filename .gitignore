@@ -34,3 +34,8 @@ img_gen/ComfyUI/input/
 img_gen/ComfyUI/output/
 img_gen/ComfyUI/models/
 img_gen/ComfyUI/temp/
+img_gen/ComfyUI/
+
+# StyleTTS2 — ignore models/data, track server scripts
+tts/
+!tts/*.py

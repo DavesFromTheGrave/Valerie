@@ -1,6 +1,6 @@
-# Grave-Lorelai
+# Valerie
 
-Grave-Lorelai is a local, audio-native AI companion system built in C# (.NET 8). It features dynamic LLM model selection, an asynchronous spoken audio pipeline, and local visual/ComfyUI integration. 
+Valerie is a local, audio-native AI companion system built in C# (.NET 8). It features dynamic LLM model selection, an asynchronous spoken audio pipeline, and local visual/ComfyUI integration. 
 
 This repository provides the core product scaffolding. Personal logs, local models, private credentials, and character voice/weight files are kept strictly isolated and ignored.
 
@@ -103,16 +103,60 @@ To prepare the local TTS server:
 
 ---
 
+## Remote Setup (Vast.ai — both LLM and TTS on the server)
+
+Both Ollama and StyleTTS2 run on the remote GPU instance. Yggdrasil connects via SSH tunnels and treats both as localhost services — no `.env` changes needed.
+
+### 1. Upload and run the setup script
+
+```powershell
+scp -P 20931 tts/setup_remote_tts.sh root@175.155.64.149:/workspace/
+ssh -p 20931 root@175.155.64.149 "bash /workspace/setup_remote_tts.sh"
+```
+
+Installs Ollama, clones StyleTTS2, downloads the LibriTTS multispeaker checkpoint, and starts both services.
+
+### 2. Upload the Ollama modelfile and create the model
+
+```powershell
+scp -P 20931 personal/modelfiles/nsfw-v-9b.modelfile root@175.155.64.149:/workspace/
+ssh -p 20931 root@175.155.64.149 "ollama create revenant/nsfw-v-9b:latest -f /workspace/nsfw-v-9b.modelfile"
+```
+
+The base model weights will be pulled automatically during `ollama create`.
+
+### 3. Upload voice reference clips
+
+```powershell
+scp -P 20931 -r tts\voice_data\cp2077_femV\* root@175.155.64.149:/workspace/voice_data/
+ssh -p 20931 root@175.155.64.149 "bash /workspace/restart_tts.sh"
+```
+
+`restart_tts.sh` is written by the setup script. It kills the running TTS server and relaunches it so the voice embedding is computed from the uploaded clips.
+
+### 4. Open SSH tunnels (Yggdrasil)
+
+```powershell
+ssh -p 20931 root@175.155.64.149 -L 11434:localhost:11434 -L 8190:localhost:8190 -N
+```
+
+| Port | Service |
+|---|---|
+| `11434` | Ollama LLM API |
+| `8190` | StyleTTS2 voice server |
+
+---
+
 ## How to Run
 
 1. Build the solution to compile the executable:
    ```powershell
-   dotnet build Grave-Lorelai.csproj
+   dotnet build Valerie.csproj
    ```
 2. Run the launcher script from the repository root:
    ```powershell
-   .\Launch_Lorelai.bat
+   .\Launch_Valerie.bat
    ```
-3. Talk to Lorelai. The text will stream in real time, and spoken sentences will play back sequentially.
+3. Talk to Valerie. The text will stream in real time, and spoken sentences will play back sequentially.
    - Use `/looks` to view or swap visual checkpoints/LoRAs.
    - Use `/model` in-chat to dynamically hot-swap local Ollama models.

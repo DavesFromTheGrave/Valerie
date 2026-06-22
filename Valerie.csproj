@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>Grave_Valerie</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationIcon>Valerie.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Using direct Ollama HTTP /api/chat for text-gen-base (no local GGUF load in-process).
+         LLamaSharp removed to keep deps light and avoid pulling CUDA natives for unused backend. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Windows.Extensions" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>
