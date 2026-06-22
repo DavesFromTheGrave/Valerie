@@ -4,6 +4,7 @@ using System.IO;
 using System.Media;
 using System.Net.Http;
 using System.Text;
+using System.Windows.Forms;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -13,20 +14,31 @@ using System.Text.RegularExpressions;
 using System.Collections.Concurrent;
 using System.Threading;
 
-namespace GraveLorelai
+namespace Valerie
 {
     class Program
     {
+        enum LlmBackend { Ollama, Zenith }
+        static LlmBackend activeBackend = LlmBackend.Ollama;
+        
+        // System V state
+        static string activeModel = "";
+        static bool enableThinking = true;
+        static string sessionFile = "";
+        static string last_thinking = "";
+        static List<object> conversation = new List<object>();
+        static HttpClient httpClient = new HttpClient();
+
         static async Task Main(string[] args)
         {
             // === LAUNCHER / BOOT SEQUENCE (game-like experience) ===
             // This is the entry point for the double-click EXE vision.
             // Boots Ollama in background, shows loading, first-run voice/text name collection,
             // then enters the conversational core. Text is for accessibility; the goal is audio-primary.
-            // Everything self-contained in this Grave-Lorelai folder so the old Lorelai can be cleaned up.
+            // Everything self-contained in this Valerie folder so the old Valerie can be cleaned up.
 
-            Console.Title = "Lorelai";
-            Console.WriteLine("Booting Lorelai...");
+            Console.Title = "Valerie";
+            Console.WriteLine("Booting Valerie...");
 
             // Load .env configuration
             LoadEnv();
@@ -91,7 +103,7 @@ namespace GraveLorelai
 
             // Simple game-like loading sequence ("screen goes dark" feel via clear + animation)
             Console.Clear();
-            Console.WriteLine("Lorelai is coming online...");
+            Console.WriteLine("Valerie is coming online...");
             for (int i = 0; i < 12; i++)
             {
                 Console.Write(".");
@@ -115,7 +127,7 @@ namespace GraveLorelai
                 //   "Hey... what's your name?"
                 // Delivery: slow, intimate, slightly husky, with a little smile in the voice. Think sultry whisper that still carries.
                 // Place the file at: assets/audio/first_boot_greeting.wav (relative to the EXE or project root).
-                // Record it with whatever TTS/voice cloning you're using in Revenant Echo so it matches the final Lorelai voice.
+                // Record it with whatever TTS/voice cloning you're using in Revenant Echo so it matches the final Valerie voice.
                 // WAV works out of the box with SoundPlayer (zero extra dependencies). MP3 would need NAudio.
                 // This is the "Lorelei will come over" moment on first boot — pure audio, no model call for the prompt itself.
                 string greetingAudioPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assets", "audio", "first_boot_greeting.wav");
@@ -126,7 +138,7 @@ namespace GraveLorelai
                     {
                         using (var player = new SoundPlayer(greetingAudioPath))
                         {
-                            player.PlaySync(); // Blocks until the clip finishes — Lorelai "comes over" via speakers
+                            player.PlaySync(); // Blocks until the clip finishes — Valerie "comes over" via speakers
                         }
                     }
                     catch (Exception ex)
@@ -138,7 +150,7 @@ namespace GraveLorelai
                 else
                 {
                     Console.WriteLine("(First-boot greeting audio not found at assets/audio/first_boot_greeting.wav)");
-                    Console.WriteLine("Falling back to text. Create a short WAV of Lorelai asking for the user's name for the real experience.");
+                    Console.WriteLine("Falling back to text. Create a short WAV of Valerie asking for the user's name for the real experience.");
                 }
 
                 Console.Write("What's your name? ");
@@ -146,326 +158,414 @@ namespace GraveLorelai
                 File.WriteAllText(nameFile, userName);
                 Console.WriteLine($"Got it. Nice to meet you, {userName}.");
                 // TODO (full audio): After playing the WAV, listen via mic + STT for the name reply.
-                // Then have Lorelai greet them properly using the name (via the LLM or another short pre-recorded clip).
+                // Then have Valerie greet them properly using the name (via the LLM or another short pre-recorded clip).
             }
             else
             {
                 userName = File.ReadAllText(nameFile).Trim();
             }
 
+            // Zenith Backend selection
+            Console.WriteLine("\nSelect LLM Backend for this session:");
+            Console.WriteLine("  [1] Ollama (Local) - Default");
+            Console.WriteLine("  [2] Zenith AI (Cloud) - openai/gpt-5.5");
+            Console.Write("Choose backend (1-2, default 1): ");
+            string? backendChoice = Console.ReadLine()?.Trim();
+            if (backendChoice == "2")
+            {
+                activeBackend = LlmBackend.Zenith;
+            }
+
             // Dynamic model selection based on local Ollama tags
             var (activeModel, enableThinking) = await SelectModelPromptAsync();
 
             // Existing text core initialization (now after the launcher/boot)
-            Console.WriteLine("Initializing Grave-Lorelai (text generation core - audio native path)...");
+            Console.WriteLine("Initializing Valerie (text generation core - audio native path)...");
 
             string loraInfo = CurrentVisual.Loras != null && CurrentVisual.Loras.Count > 0 
                 ? string.Join(" + ", CurrentVisual.Loras.Select(l => $"{l.Name} (x{l.Strength})")) 
                 : "none";
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"Lorelai visual style: Checkpoint={CurrentVisual.Checkpoint}, LoRAs=[{loraInfo}]");
+            Console.WriteLine($"Valerie visual style: Checkpoint={CurrentVisual.Checkpoint}, LoRAs=[{loraInfo}]");
             Console.WriteLine("Type /looks or /help for easy model/LoRA/appearance swapping (full customization without ComfyUI hassle).");
             Console.WriteLine("To FORCE a test photo right now (bypasses the AI deciding): type  /photo close-up selfie in bedroom, soft light, smiling  (or any description)");
             Console.ResetColor();
 
             // Paths - using the custom Ollama model (persona prompt is baked into the model via modelfile).
-            // Lorelai_Persona.txt in personal/prompts/ is the source for the modelfile (and reference).
+            // Valerie_Persona.txt in personal/prompts/ is the source for the modelfile (and reference).
             // No local model load needed; all via Ollama API.
             // personaPath kept for reference only (prompt is baked into the custom Ollama model)
-            // string personaPath = @"M:\Projects\Grave-Lorelai\personal\prompts\Lorelai_Persona.txt"; // for reference / future use
+            // string personaPath = @"M:\Projects\Valerie\personal\prompts\Valerie_Persona.txt"; // for reference / future use
 
             // (No modelPath or systemPrompt load - handled by the custom Ollama model)
 
-            Console.WriteLine($"\nGrave-Lorelai ready for {userName} (Lorelai persona - spoken words first, via Ollama model {activeModel}).");
+            Console.WriteLine($"\nValerie ready for {userName} (Valerie persona - spoken words first, via Ollama model {activeModel}).");
             Console.WriteLine("Type message (or use voice when the audio layer is wired). Output is the text for audio/TTS. 'exit' to quit.\n");
             Console.WriteLine("Audio goal: local LLM here for content -> TTS (cloud Ara/Google or future local) -> local images after spoken line.");
             Console.WriteLine("GPU handoff note: LLM on GPU now; later queue ComfyUI to avoid VRAM fight on 3070 Ti.\n");
             if (isFirstBoot)
             {
-                Console.WriteLine("First boot complete. On next launch Lorelai will greet you by name through the speakers.");
+                Console.WriteLine("First boot complete. On next launch Valerie will greet you by name through the speakers.");
             }
 
-            // Auto-logging for recording system (starts proper engineering data collection, separated by LLM/persona)
-            string logDir = Path.Combine("personal", "chats", "lorelai");
+            // Auto-logging for recording system
+            string logDir = Path.Combine("personal", "chats", "valerie");
             Directory.CreateDirectory(logDir);
-            string sessionFile = Path.Combine(logDir, $"session_{DateTime.Now:yyyyMMdd_HHmmss}.jsonl");
+            sessionFile = Path.Combine(logDir, $"session_{DateTime.Now:yyyyMMdd_HHmmss}.jsonl");
 
-            string last_thinking = "";
-            var conversation = new List<object>();
+            last_thinking = "";
+            conversation = new List<object>();
+            httpClient = new HttpClient();
 
-            var httpClient = new HttpClient();
+            // Start WinForms Application Context
+            Application.Run(new ValerieApplicationContext(HandleUserTurnAsync));
+        }
 
-            while (true)
+        public static async Task HandleUserTurnAsync(string input)
+        {
+            if (string.IsNullOrEmpty(input) || input.Equals("exit", StringComparison.OrdinalIgnoreCase))
             {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.Write("You: ");
-                Console.ResetColor();
+                Application.Exit();
+                return;
+            }
 
-                string? rawInput = Console.ReadLine();
+            // Intercept visual customization commands first
+            if (HandleVisualCommand(input)) return;
 
-                // Treat null (EOF / stdin closed / non-interactive terminal) or empty as exit.
-                // This is why you sometimes see it print "You: " and immediately shut down:
-                // the terminal/session that launched "dotnet run" did not provide a live interactive stdin.
-                if (rawInput == null)
+            // Intercept LLM model switching command
+            if (input.StartsWith("/model", StringComparison.OrdinalIgnoreCase))
+            {
+                var result = await HandleModelCommandAsync(input, httpClient);
+                if (result.switched)
                 {
-                    Console.WriteLine();
-                    Console.WriteLine("(No interactive input detected — stdin appears closed or redirected.)");
-                    Console.WriteLine("Try opening a fresh PowerShell window directly in this folder (address bar trick or Start > PowerShell) and run 'dotnet run' again.");
-                    break;
+                    activeModel = result.modelName;
+                    enableThinking = result.thinking;
                 }
+                return;
+            }
 
-                string input = rawInput.Trim();
-
-                if (string.IsNullOrEmpty(input) || input.Equals("exit", StringComparison.OrdinalIgnoreCase))
+            // Quick force test for photo generation
+            if (input.Trim().ToLower().StartsWith("/photo "))
+            {
+                string scene = input.Trim().Substring(7).Trim();
+                if (!string.IsNullOrWhiteSpace(scene))
                 {
-                    break;
+                    Console.WriteLine($"[Forcing test photo with scene: {scene}]");
+                    _ = Task.Run(() => GenerateValerieSelfieAsync(scene));
                 }
-
-                // Intercept visual customization commands first (easy model/LoRA/appearance swap)
-                if (HandleVisualCommand(input))
+                else
                 {
-                    continue;  // handled, don't send to LLM
+                    Console.WriteLine("Usage: /photo close-up selfie in my bedroom, wearing cyberpunk outfit, smiling at camera");
                 }
+                return;
+            }
 
-                // Intercept LLM model switching command
-                if (input.StartsWith("/model", StringComparison.OrdinalIgnoreCase))
-                {
-                    var result = await HandleModelCommandAsync(input, httpClient);
-                    if (result.switched)
-                    {
-                        activeModel = result.modelName;
-                        enableThinking = result.thinking;
-                    }
-                    continue;
-                }
+            if (input.Equals("t", StringComparison.OrdinalIgnoreCase) || input.Equals("thoughts", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!string.IsNullOrEmpty(last_thinking))
+                    Console.WriteLine("\n--- V's thoughts ---\n" + last_thinking + "\n---\n");
+                else
+                    Console.WriteLine("No thoughts for the last turn.");
+                return;
+            }
 
-                // Quick force test for photo generation (bypasses LLM tag - use this to test the image pipeline)
-                if (input.Trim().ToLower().StartsWith("/photo "))
-                {
-                    string scene = input.Trim().Substring(7).Trim();
-                    if (!string.IsNullOrWhiteSpace(scene))
-                    {
-                        Console.WriteLine($"[Forcing test photo with scene: {scene}]");
-                        _ = Task.Run(() => GenerateLorelaiSelfieAsync(scene));
-                    }
-                    else
-                    {
-                        Console.WriteLine("Usage: /photo close-up selfie in my bedroom, wearing cyberpunk outfit, smiling at camera");
-                    }
-                    continue;
-                }
+            // Add user message to conversation history for proper back-and-forth
+            conversation.Add(new { role = "user", content = input });
 
-                if (input.Equals("t", StringComparison.OrdinalIgnoreCase) || input.Equals("thoughts", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!string.IsNullOrEmpty(last_thinking))
-                    {
-                        Console.WriteLine("\n--- V's thoughts ---\n" + last_thinking + "\n---\n");
-                    }
-                    else
-                    {
-                        Console.WriteLine("No thoughts for the last turn.");
-                    }
-                    continue;
-                }
+            Console.ForegroundColor = ConsoleColor.DarkMagenta;
+            Console.Write("Valerie (spoken text): ");
+            Console.ResetColor();
 
-                // Add user message to conversation history for proper back-and-forth
-                conversation.Add(new { role = "user", content = input });
+            StringBuilder fullResponse = new StringBuilder();
+            StringBuilder thoughtsBuffer = new StringBuilder();
+            StringBuilder sentenceBuffer = new StringBuilder();
+            
+            bool isThinking = false;
+            bool thinkingShown = false;
 
-                Console.ForegroundColor = ConsoleColor.DarkMagenta;
-                Console.Write("Lorelai (spoken text): ");
-                Console.ResetColor();
+            if (activeBackend == LlmBackend.Zenith)
+            {
+                await StreamZenithChatAsync(httpClient, conversation, fullResponse, thoughtsBuffer, sentenceBuffer);
+            }
+            else
+            {
+                await StreamOllamaChatAsync(httpClient, activeModel, conversation, fullResponse, thoughtsBuffer, sentenceBuffer);
+            }
 
-                StringBuilder fullResponse = new StringBuilder();
-                StringBuilder thoughtsBuffer = new StringBuilder();
-                StringBuilder sentenceBuffer = new StringBuilder();
+            Console.WriteLine();
+            string cleanSpoken = fullResponse.ToString().Trim();
+            last_thinking = thoughtsBuffer.ToString().Trim();
+
+            // Add clean spoken response (thoughts kept app-side only for the "t" view)
+            conversation.Add(new { role = "assistant", content = cleanSpoken });
+
+            if (!string.IsNullOrEmpty(last_thinking))
+            {
+                Console.WriteLine("[ t for thoughts ]");
+            }
+
+            var logEntry = new 
+            {
+                timestamp = DateTime.UtcNow.ToString("o"),
+                user = input,
+                v = cleanSpoken,
+                llm = $"ollama:{activeModel}",
+                persona = "v-4.7.5-compressed (baked in model)"
+            };
+            File.AppendAllText(sessionFile, System.Text.Json.JsonSerializer.Serialize(logEntry) + Environment.NewLine);
+        }
+
+
+        static async Task StreamOllamaChatAsync(HttpClient httpClient, string activeModel, List<object> conversation, StringBuilder fullResponse, StringBuilder thoughtsBuffer, StringBuilder sentenceBuffer)
+        {
+            bool isThinking = false;
+            bool thinkingShown = false;
+            char[] spinner = new char[] { '|', '/', '-', '\\' };
+            int spinnerIndex = 0;
+
+            var requestBody = new 
+            {
+                model = activeModel,
+                messages = conversation.ToArray(),
+                stream = true,
+                think = enableThinking
+            };
+
+            var json = System.Text.Json.JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await httpClient.PostAsync("http://127.0.0.1:11434/api/chat", content);
+            response.EnsureSuccessStatusCode();
+
+            using var stream = await response.Content.ReadAsStreamAsync();
+            using var reader = new StreamReader(stream);
+            string? line;
+            
+            while ((line = await reader.ReadLineAsync()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                var chunk = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(line);
                 
-                bool isThinking = false;
-                bool thinkingShown = false;
-                
-                char[] spinner = new char[] { '|', '/', '-', '\\' };
-                int spinnerIndex = 0;
-
-                var requestBody = new 
+                if (chunk.TryGetProperty("message", out var msgElement))
                 {
-                    model = activeModel,
-                    messages = conversation.ToArray(),
-                    stream = true,
-                    think = enableThinking
-                };
+                    // 1. Check native thinking chunk
+                    bool hasThinkingProp = msgElement.TryGetProperty("thinking", out var thinkingElement);
+                    if (hasThinkingProp)
+                    {
+                        string? thinkText = thinkingElement.GetString();
+                        if (!string.IsNullOrEmpty(thinkText))
+                        {
+                            thoughtsBuffer.Append(thinkText);
+                            
+                            // Show spinner
+                            if (!thinkingShown)
+                            {
+                                Console.Write("Thinking...  ");
+                                thinkingShown = true;
+                            }
+                            Console.Write($"\b{spinner[spinnerIndex]}");
+                            spinnerIndex = (spinnerIndex + 1) % spinner.Length;
+                            continue; // Skip printing to spoken console
+                        }
+                    }
 
-                var json = JsonSerializer.Serialize(requestBody);
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
-                using var response = await httpClient.PostAsync("http://127.0.0.1:11434/api/chat", content);
-                response.EnsureSuccessStatusCode();
+                    // 2. Check spoken content chunk
+                    if (msgElement.TryGetProperty("content", out var contentElement))
+                    {
+                        string? text = contentElement.GetString();
+                        if (!string.IsNullOrEmpty(text))
+                        {
+                            // If we were showing the spinner, erase it now
+                            if (thinkingShown)
+                            {
+                                // Backspace, space, backspace to clear the spinner character
+                                Console.Write("\b \b");
+                                thinkingShown = false;
+                            }
+
+                            // Check for inline `<think>` tags (fallback/redundancy)
+                            string temp = text;
+                            if (temp.Contains("<think>"))
+                            {
+                                isThinking = true;
+                                int startIdx = temp.IndexOf("<think>");
+                                thoughtsBuffer.Append(temp.Substring(startIdx + 7));
+                                continue;
+                            }
+                            if (temp.Contains("</think>"))
+                            {
+                                isThinking = false;
+                                int endIdx = temp.IndexOf("</think>");
+                                thoughtsBuffer.Append(temp.Substring(0, endIdx));
+                                temp = temp.Substring(endIdx + 8);
+                            }
+
+                            if (isThinking)
+                            {
+                                thoughtsBuffer.Append(temp);
+                                continue; // Don't print thoughts to the text console
+                            }
+
+                            // Native spoken content
+                            Console.Write(temp);
+                            fullResponse.Append(temp);
+                            sentenceBuffer.Append(temp);
+
+                            // Trigger TTS dynamically on punctuation
+                            string currentSentence = sentenceBuffer.ToString();
+                            if (currentSentence.Contains(".") || currentSentence.Contains("!") || currentSentence.Contains("?"))
+                            {
+                                // Find last punctuation mark
+                                int lastPunc = -1;
+                                int dotIdx = currentSentence.LastIndexOf(".");
+                                int exclIdx = currentSentence.LastIndexOf("!");
+                                int qIdx = currentSentence.LastIndexOf("?");
+                                lastPunc = Math.Max(dotIdx, Math.Max(exclIdx, qIdx));
+
+                                if (lastPunc != -1)
+                                {
+                                    string toSpeak = currentSentence.Substring(0, lastPunc + 1).Trim();
+                                    string remainder = currentSentence.Substring(lastPunc + 1);
+                                    
+                                    if (!string.IsNullOrWhiteSpace(toSpeak))
+                                    {
+                                        ttsQueue.Add(toSpeak);
+                                    }
+                                    
+                                    sentenceBuffer.Clear();
+                                    sentenceBuffer.Append(remainder);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Flush remaining text to TTS
+            string finalSentence = sentenceBuffer.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(finalSentence))
+            {
+                ttsQueue.Add(finalSentence);
+            }
+        }
+
+        static async Task StreamZenithChatAsync(HttpClient httpClient, List<object> conversation, StringBuilder fullResponse, StringBuilder thoughtsBuffer, StringBuilder sentenceBuffer)
+        {
+            string zenithKey = GetEnv("ZENITH_API_KEY");
+            if (string.IsNullOrEmpty(zenithKey))
+            {
+                Console.WriteLine("\n[ERROR] ZENITH_API_KEY not found in .env");
+                return;
+            }
+
+            var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.zenllm.org/v1/chat/completions");
+            requestMessage.Headers.Add("Authorization", $"Bearer {zenithKey}");
+            requestMessage.Headers.Add("User-Agent", "Valerie/1.0");
+
+            var requestBody = new 
+            {
+                model = GetEnv("ZENITH_MODEL", "openai/gpt-5.5"),
+                messages = conversation.ToArray(),
+                stream = true
+            };
+
+            string jsonStr = JsonSerializer.Serialize(requestBody);
+            requestMessage.Content = new StringContent(jsonStr, Encoding.UTF8, "application/json");
+
+            try
+            {
+                using var response = await httpClient.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead);
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errorBody = await response.Content.ReadAsStringAsync();
+                    Console.WriteLine($"\n[Zenith API Error] {response.StatusCode}: {errorBody}");
+                    return; // Return cleanly instead of throwing EnsureSuccessStatusCode
+                }
 
                 using var stream = await response.Content.ReadAsStreamAsync();
                 using var reader = new StreamReader(stream);
                 string? line;
-                
+                bool isThinking = false;
+                bool thinkingShown = false;
+                char[] spinner = new char[] { '|', '/', '-', '\\' };
+                int spinnerIndex = 0;
+
                 while ((line = await reader.ReadLineAsync()) != null)
                 {
                     if (string.IsNullOrWhiteSpace(line)) continue;
-                    var chunk = JsonSerializer.Deserialize<JsonElement>(line);
-                    
-                    if (chunk.TryGetProperty("message", out var msgElement))
+                    if (line.StartsWith("data: [DONE]")) break;
+                    if (line.StartsWith("data: "))
                     {
-                        // 1. Check native thinking chunk
-                        bool hasThinkingProp = msgElement.TryGetProperty("thinking", out var thinkingElement);
-                        if (hasThinkingProp)
+                        string dataStr = line.Substring(6);
+                        try
                         {
-                            string? thinkText = thinkingElement.GetString();
-                            if (!string.IsNullOrEmpty(thinkText))
+                            var chunk = JsonSerializer.Deserialize<JsonElement>(dataStr);
+                            if (chunk.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
                             {
-                                thoughtsBuffer.Append(thinkText);
-                                
-                                // Show spinner
-                                if (!thinkingShown)
+                                var delta = choices[0].GetProperty("delta");
+                                if (delta.TryGetProperty("content", out var contentElement))
                                 {
-                                    Console.Write("Thinking...  ");
-                                    thinkingShown = true;
-                                }
-                                Console.Write($"\b{spinner[spinnerIndex]}");
-                                spinnerIndex = (spinnerIndex + 1) % spinner.Length;
-                                continue; // Skip printing to spoken console
-                            }
-                        }
-
-                        // 2. Check spoken content chunk
-                        if (msgElement.TryGetProperty("content", out var contentElement))
-                        {
-                            string? text = contentElement.GetString();
-                            if (!string.IsNullOrEmpty(text))
-                            {
-                                // If we were showing the spinner, erase it now
-                                if (thinkingShown)
-                                {
-                                    // Backspace, space, backspace to clear the spinner character
-                                    Console.Write("\b \b");
-                                    thinkingShown = false;
-                                }
-
-                                // Check for inline `<think>` tags (fallback/redundancy)
-                                string temp = text;
-                                if (temp.Contains("<think>"))
-                                {
-                                    isThinking = true;
-                                    int startIdx = temp.IndexOf("<think>");
-                                    thoughtsBuffer.Append(temp.Substring(startIdx + 7));
-                                    continue;
-                                }
-                                if (temp.Contains("</think>"))
-                                {
-                                    isThinking = false;
-                                    int endIdx = temp.IndexOf("</think>");
-                                    string after = temp.Substring(endIdx + 8);
-                                    if (!string.IsNullOrEmpty(after))
+                                    string? text = contentElement.GetString();
+                                    if (!string.IsNullOrEmpty(text))
                                     {
-                                        Console.Write(after);
-                                        fullResponse.Append(after);
-                                        sentenceBuffer.Append(after);
-                                        ProcessSentenceBuffer(ref sentenceBuffer);
-                                    }
-                                    continue;
-                                }
+                                        if (thinkingShown)
+                                        {
+                                            Console.Write("\b \b");
+                                            thinkingShown = false;
+                                        }
 
-                                if (isThinking)
-                                {
-                                    thoughtsBuffer.Append(temp);
-                                    
-                                    // Show spinner for inline thinking too
-                                    if (!thinkingShown)
-                                    {
-                                        Console.Write("Thinking...  ");
-                                        thinkingShown = true;
+                                        string temp = text;
+                                        if (temp.Contains("<think>"))
+                                        {
+                                            isThinking = true;
+                                            int startIdx = temp.IndexOf("<think>");
+                                            thoughtsBuffer.Append(temp.Substring(startIdx + 7));
+                                            continue;
+                                        }
+                                        if (temp.Contains("</think>"))
+                                        {
+                                            isThinking = false;
+                                            int endIdx = temp.IndexOf("</think>");
+                                            string after = temp.Substring(endIdx + 8);
+                                            if (!string.IsNullOrEmpty(after))
+                                            {
+                                                Console.Write(after);
+                                                fullResponse.Append(after);
+                                                sentenceBuffer.Append(after);
+                                                ProcessSentenceBuffer(ref sentenceBuffer);
+                                            }
+                                            continue;
+                                        }
+
+                                        if (isThinking)
+                                        {
+                                            thoughtsBuffer.Append(temp);
+                                            if (!thinkingShown)
+                                            {
+                                                Console.Write("Thinking...  ");
+                                                thinkingShown = true;
+                                            }
+                                            Console.Write($"\b{spinner[spinnerIndex]}");
+                                            spinnerIndex = (spinnerIndex + 1) % spinner.Length;
+                                        }
+                                        else
+                                        {
+                                            Console.Write(temp);
+                                            fullResponse.Append(temp);
+                                            sentenceBuffer.Append(temp);
+                                            ProcessSentenceBuffer(ref sentenceBuffer);
+                                        }
                                     }
-                                    Console.Write($"\b{spinner[spinnerIndex]}");
-                                    spinnerIndex = (spinnerIndex + 1) % spinner.Length;
-                                }
-                                else
-                                {
-                                    // Print spoken content
-                                    Console.Write(temp);
-                                    fullResponse.Append(temp);
-                                    sentenceBuffer.Append(temp);
-                                    ProcessSentenceBuffer(ref sentenceBuffer);
                                 }
                             }
                         }
-                    }
-                    if (chunk.TryGetProperty("done", out var doneElement) && doneElement.GetBoolean())
-                    {
-                        break;
+                        catch { }
                     }
                 }
-
-                // Erase spinner if it was still active
-                if (thinkingShown)
-                {
-                    Console.Write("\b \b");
-                }
-
-                Console.WriteLine("\n");
-
-                // Flush remaining sentence buffer
-                string remaining = sentenceBuffer.ToString().Trim();
-                if (!string.IsNullOrEmpty(remaining))
-                {
-                    ttsQueue.Add(remaining);
-                }
-
-                // Extract final strings
-                string spoken = fullResponse.ToString().Trim();
-                string thoughts = thoughtsBuffer.ToString().Trim();
-
-                // === Lorelai Camera tag handling (after full turn) ===
-                string cleanSpoken = spoken;
-                if (spoken.Contains(PhotoTag, StringComparison.OrdinalIgnoreCase))
-                {
-                    // Extract the scene description inside the tag
-                    int start = spoken.IndexOf(PhotoTag, StringComparison.OrdinalIgnoreCase);
-                    int end = spoken.IndexOf(']', start);
-                    string scene = "";
-                    if (end > start)
-                    {
-                        scene = spoken.Substring(start + PhotoTag.Length, end - (start + PhotoTag.Length)).Trim();
-                    }
-
-                    // Clean the tag out of the text that gets spoken / displayed / saved to conversation history
-                    cleanSpoken = Regex.Replace(spoken, @"\[SEND_PHOTO:[^\]]*\]", "", RegexOptions.IgnoreCase).Trim();
-
-                    if (!string.IsNullOrWhiteSpace(scene))
-                    {
-                        _ = Task.Run(() => GenerateLorelaiSelfieAsync(scene));
-                    }
-                }
-
-                // Ensure log and last_thinking are clean
-                last_thinking = thoughts;
-
-                // Add clean spoken response (thoughts kept app-side only for the "t" view)
-                conversation.Add(new { role = "assistant", content = cleanSpoken });
-
-                if (!string.IsNullOrEmpty(last_thinking))
-                {
-                    Console.WriteLine("[ t for thoughts ]");
-                }
-
-                var logEntry = new 
-                {
-                    timestamp = DateTime.UtcNow.ToString("o"),
-                    user = input,
-                    v = cleanSpoken,
-                    llm = $"ollama:{activeModel}",
-                    persona = "v-4.7.5-compressed (baked in model)"
-                };
-                File.AppendAllText(sessionFile, System.Text.Json.JsonSerializer.Serialize(logEntry) + Environment.NewLine);
-
-                // Future: here we will hand off fullResponse.ToString() to TTS (Ara/Google/local)
-                // Then after TTS completes, trigger image gen if [SEND_PHOTO] or scene detected.
-                // For now: text is ready for audio.
             }
-
-            Console.WriteLine("Grave-Lorelai text core shut down.");
+            catch (Exception ex)
+            {
+                Console.WriteLine($"\n[Zenith Stream Error] {ex.Message}");
+            }
         }
 
         static bool IsOllamaRunning()
@@ -482,7 +582,7 @@ namespace GraveLorelai
             }
         }
 
-        // === Lorelai TTS Audio & Streaming Queue Configuration ===
+        // === Valerie TTS Audio & Streaming Queue Configuration ===
         static BlockingCollection<string> ttsQueue = new BlockingCollection<string>();
         static CancellationTokenSource ttsCts = new CancellationTokenSource();
         static Dictionary<string, string> EnvVars = new Dictionary<string, string>();
@@ -491,7 +591,7 @@ namespace GraveLorelai
         {
             try
             {
-                string envPath = Path.Combine(GetLorelaiRoot(), ".env");
+                string envPath = Path.Combine(GetValerieRoot(), ".env");
                 if (!File.Exists(envPath)) return;
                 foreach (var line in File.ReadAllLines(envPath))
                 {
@@ -538,14 +638,14 @@ namespace GraveLorelai
             Console.WriteLine("TTS Server not detected. Launching local TTS Server...");
             try
             {
-                string scriptPath = Path.Combine(GetLorelaiRoot(), "personal", "tts_server.py");
+                string scriptPath = Path.Combine(GetValerieRoot(), "personal", "tts_server.py");
                 if (File.Exists(scriptPath))
                 {
                     var ttsInfo = new ProcessStartInfo
                     {
                         FileName = "python",
                         Arguments = $"-u \"{scriptPath}\"",
-                        WorkingDirectory = Path.Combine(GetLorelaiRoot(), "personal"),
+                        WorkingDirectory = Path.Combine(GetValerieRoot(), "personal"),
                         CreateNoWindow = true,
                         UseShellExecute = false,
                         RedirectStandardOutput = false,
@@ -602,6 +702,7 @@ namespace GraveLorelai
 
                         byte[]? audioBytes = null;
                         string grokKey = GetEnv("GROK_TTS_API_KEY");
+                        string zenithKey = GetEnv("ZENITH_API_KEY");
 
                         if (!string.IsNullOrEmpty(grokKey))
                         {
@@ -634,6 +735,43 @@ namespace GraveLorelai
                             catch (Exception ex)
                             {
                                 Console.WriteLine($"\n(xAI TTS Connection failed: {ex.Message}. Falling back to local TTS...)");
+                            }
+                        }
+                        else if (!string.IsNullOrEmpty(GetEnv("ZENITH_TTS_MODEL")))
+                        {
+                            try
+                            {
+                                var requestMessage = new HttpRequestMessage(HttpMethod.Post, "https://api.zenllm.org/v1/audio/speech");
+                                requestMessage.Headers.Add("Authorization", $"Bearer {zenithKey}");
+                                requestMessage.Headers.Add("User-Agent", "Valerie/1.0");
+                                
+                                string ttsModel = GetEnv("ZENITH_TTS_MODEL", "xai/grok-tts-1");
+                                string ttsVoice = GetEnv("ZENITH_TTS_VOICE", "ara");
+                                
+                                var payload = new
+                                {
+                                    input = cleanText,
+                                    model = ttsModel,
+                                    voice = ttsVoice,
+                                    response_format = "wav"
+                                };
+                                string jsonStr = JsonSerializer.Serialize(payload);
+                                requestMessage.Content = new StringContent(jsonStr, Encoding.UTF8, "application/json");
+                                
+                                var response = await audioClient.SendAsync(requestMessage, ct);
+                                if (response.IsSuccessStatusCode)
+                                {
+                                    audioBytes = await response.Content.ReadAsByteArrayAsync(ct);
+                                }
+                                else
+                                {
+                                    string errBody = await response.Content.ReadAsStringAsync(ct);
+                                    Console.WriteLine($"\n(Zenith TTS error: {response.StatusCode} - {errBody}. Falling back to local TTS...)");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"\n(Zenith TTS Connection failed: {ex.Message}. Falling back to local TTS...)");
                             }
                         }
 
@@ -746,7 +884,7 @@ namespace GraveLorelai
                                             name.StartsWith("grave/", StringComparison.OrdinalIgnoreCase) ||
                                             name.StartsWith("from-the-grave/", StringComparison.OrdinalIgnoreCase) ||
                                             name.StartsWith("ftg/", StringComparison.OrdinalIgnoreCase) ||
-                                            name.Contains("lorelai", StringComparison.OrdinalIgnoreCase);
+                                            name.Contains("valerie", StringComparison.OrdinalIgnoreCase);
                         if (matchesBrand)
                         {
                             candidateModels.Add((name, thinking));
@@ -940,7 +1078,7 @@ namespace GraveLorelai
             return (false, "", false);
         }
 
-        // === Lorelai Visual Customization, Camera, & ComfyUI integration ===
+        // === Valerie Visual Customization, Camera, & ComfyUI integration ===
         static readonly string PonyQuality = "score_9, score_8_up, score_7_up, score_6_up, source_photo, ";
         static readonly string PhotoTag = "[SEND_PHOTO:";
         static readonly HttpClient http = new HttpClient { Timeout = TimeSpan.FromMinutes(3) };
@@ -966,7 +1104,7 @@ namespace GraveLorelai
 
         static VisualSettings CurrentVisual = LoadVisualSettings();
 
-        static string GetLorelaiRoot()
+        static string GetValerieRoot()
         {
             string exeDir = AppDomain.CurrentDomain.BaseDirectory;
             return Path.GetFullPath(Path.Combine(exeDir, "..", "..", ".."));
@@ -974,7 +1112,7 @@ namespace GraveLorelai
 
         static VisualSettings LoadVisualSettings()
         {
-            string path = Path.Combine(GetLorelaiRoot(), "lorelai_visual_settings.json");
+            string path = Path.Combine(GetValerieRoot(), "valerie_visual_settings.json");
             if (File.Exists(path))
             {
                 try
@@ -992,13 +1130,13 @@ namespace GraveLorelai
         static void SaveVisualSettings(VisualSettings? settings = null)
         {
             if (settings == null) settings = CurrentVisual;
-            string path = Path.Combine(GetLorelaiRoot(), "lorelai_visual_settings.json");
+            string path = Path.Combine(GetValerieRoot(), "valerie_visual_settings.json");
             File.WriteAllText(path, JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true }));
         }
 
         static List<string> GetAvailableModels(string subfolder) // "checkpoints" or "loras"
         {
-            string dir = Path.Combine(GetLorelaiRoot(), "img_gen", "ComfyUI", "models", subfolder);
+            string dir = Path.Combine(GetValerieRoot(), "img_gen", "ComfyUI", "models", subfolder);
             if (!Directory.Exists(dir)) return new List<string>();
             return Directory.GetFiles(dir, "*.safetensors")
                             .Select(Path.GetFileName)
@@ -1016,7 +1154,7 @@ namespace GraveLorelai
             if (lower == "/looks" || lower == "/style" || lower == "/settings")
             {
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"Current visual settings for Lorelai:");
+                Console.WriteLine($"Current visual settings for Valerie:");
                 Console.WriteLine($"  Checkpoint: {CurrentVisual.Checkpoint}");
                 string loraList = CurrentVisual.Loras != null && CurrentVisual.Loras.Count > 0 
                     ? string.Join(" + ", CurrentVisual.Loras.Select(l => $"{l.Name} (x{l.Strength})")) 
@@ -1057,7 +1195,7 @@ namespace GraveLorelai
                     ? string.Join(" + ", CurrentVisual.Loras.Select(l => $"{l.Name} (x{l.Strength})")) 
                     : "none";
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"Lorelai's active LoRAs switched to: [{loraInfo}]. Next photo will use them.");
+                Console.WriteLine($"Valerie's active LoRAs switched to: [{loraInfo}]. Next photo will use them.");
                 Console.ResetColor();
                 return true;
             }
@@ -1075,7 +1213,7 @@ namespace GraveLorelai
                 CurrentVisual.Checkpoint = match;
                 SaveVisualSettings();
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"Lorelai's base model switched to: {CurrentVisual.Checkpoint}. Next photo will use it.");
+                Console.WriteLine($"Valerie's base model switched to: {CurrentVisual.Checkpoint}. Next photo will use it.");
                 Console.ResetColor();
                 return true;
             }
@@ -1112,7 +1250,7 @@ namespace GraveLorelai
                     CurrentVisual.Appearance = newApp;
                     SaveVisualSettings();
                     Console.ForegroundColor = ConsoleColor.Green;
-                    Console.WriteLine("Lorelai's base appearance for photos updated. Future [SEND_PHOTO] generations will use the new description. This is your full control over how she looks visually.");
+                    Console.WriteLine("Valerie's base appearance for photos updated. Future [SEND_PHOTO] generations will use the new description. This is your full control over how she looks visually.");
                     Console.ResetColor();
                 }
                 return true;
@@ -1121,7 +1259,7 @@ namespace GraveLorelai
             if (lower == "/help" || lower == "/custom" || lower == "/customize")
             {
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine("Lorelai Customization Commands:");
+                Console.WriteLine("Valerie Customization Commands:");
                 Console.WriteLine("  /looks or /style          - show current + list all available image models/LoRAs");
                 Console.WriteLine("  /lora <partial name or none>   - change image LoRA");
                 Console.WriteLine("  /checkpoint <partial name>     - change base image checkpoint");
@@ -1137,12 +1275,12 @@ namespace GraveLorelai
             return false;
         }
 
-        static async Task GenerateLorelaiSelfieAsync(string sceneDescription)
+        static async Task GenerateValerieSelfieAsync(string sceneDescription)
         {
             try
             {
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine("\n[Lorelai is taking a photo...]");
+                Console.WriteLine("\n[Valerie is taking a photo...]");
                 Console.ResetColor();
 
                 string positive = PonyQuality + CurrentVisual.Appearance + ", " + sceneDescription + ", beautiful detailed face, sharp focus, natural skin pores, soft lighting";
@@ -1247,7 +1385,7 @@ namespace GraveLorelai
                 {
                     ["inputs"] = new JsonObject
                     {
-                        ["filename_prefix"] = "Lorelai",
+                        ["filename_prefix"] = "Valerie",
                         ["images"] = new JsonArray("7", 0)
                     },
                     ["class_type"] = "SaveImage"
@@ -1312,17 +1450,17 @@ namespace GraveLorelai
 
                 if (string.IsNullOrEmpty(imageFilename))
                 {
-                    Console.WriteLine("[Lorelai] Couldn't finish the photo (timeout or error).");
+                    Console.WriteLine("[Valerie] Couldn't finish the photo (timeout or error).");
                     return;
                 }
 
-                string comfyOutput = Path.Combine(GetLorelaiRoot(), "img_gen", "ComfyUI", "output", imageFilename);
-                string selfiesDir = Path.Combine(GetLorelaiRoot(), "selfies");
+                string comfyOutput = Path.Combine(GetValerieRoot(), "img_gen", "ComfyUI", "output", imageFilename);
+                string selfiesDir = Path.Combine(GetValerieRoot(), "selfies");
                 Directory.CreateDirectory(selfiesDir);
 
                 string safeScene = Regex.Replace(sceneDescription, @"[^a-zA-Z0-9_-]", "_").ToLowerInvariant();
                 if (safeScene.Length > 60) safeScene = safeScene.Substring(0, 60);
-                string destName = $"lorelai_{DateTime.Now:yyyyMMdd_HHmmss}_{safeScene}.png";
+                string destName = $"valerie_{DateTime.Now:yyyyMMdd_HHmmss}_{safeScene}.png";
                 string destPath = Path.Combine(selfiesDir, destName);
 
                 if (File.Exists(comfyOutput))
@@ -1337,7 +1475,7 @@ namespace GraveLorelai
                 }
 
                 Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"[Lorelai sent a photo - saved to: {destName}. Open it from the selfies folder.]");
+                Console.WriteLine($"[Valerie sent a photo - saved to: {destName}. Open it from the selfies folder.]");
                 Console.ResetColor();
             }
             catch (Exception ex)
@@ -1361,7 +1499,7 @@ namespace GraveLorelai
             Console.WriteLine("ComfyUI not detected. Launching ComfyUI in the background...");
             try
             {
-                string imgGenDir = Path.Combine(GetLorelaiRoot(), "img_gen");
+                string imgGenDir = Path.Combine(GetValerieRoot(), "img_gen");
                 string batPath = Path.Combine(imgGenDir, "run_nvidia_gpu.bat");
 
                 if (File.Exists(batPath))
@@ -1409,3 +1547,4 @@ namespace GraveLorelai
         }
     }
 }
+

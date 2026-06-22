@@ -8,6 +8,7 @@ Secrets.env
 *.key
 *.pem
 config.local.*
+tts/
 
 # .NET build directories
 bin/
