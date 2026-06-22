@@ -8,7 +8,6 @@ Secrets.env
 *.key
 *.pem
 config.local.*
-tts/
 
 # .NET build directories
 bin/
@@ -35,3 +34,7 @@ img_gen/ComfyUI/input/
 img_gen/ComfyUI/output/
 img_gen/ComfyUI/models/
 img_gen/ComfyUI/temp/
+img_gen/ComfyUI/
+
+#Style2 TTS
+tts/
