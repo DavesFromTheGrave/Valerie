@@ -1,0 +1,4 @@
+{
+  "_comment": "PLACEHOLDER ComfyUI workflow for Valerie's selfies. NOT yet wired into the app. Replace this file's contents with a real API-format export from ComfyUI (build a txt2img graph for V's checkpoint, then use 'Save (API Format)'). The ComfyUiImageGenerator stub references this path via config (ImageGen:WorkflowPath) but does not execute it yet. When wired, the app will inject the prompt + a random seed into this graph at runtime.",
+  "nodes": "placeholder — export your real ComfyUI graph here in API format"
+}

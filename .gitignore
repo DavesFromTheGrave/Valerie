@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+
+# Secrets — DPAPI-encrypted key store (never committed)
+secrets/
+*.key
+
+# Local config overrides (non-secret) / misc
+appsettings.Local.json
+.env
+*.user
+
+# Generated selfies (keep the folder, ignore the images)
+selfies/*
+!selfies/.gitkeep
+
+# OS cruft
+Thumbs.db
+.DS_Store
