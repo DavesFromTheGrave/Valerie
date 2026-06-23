@@ -84,28 +84,35 @@ public sealed class OllamaLlmClient : ILlmClient
         using var reader = new StreamReader(stream);
 
         var full = new StringBuilder();
-        string? line;
-        while ((line = await reader.ReadLineAsync(ct)) is not null)
+        try
         {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-
-            JsonElement chunk;
-            try { chunk = JsonSerializer.Deserialize<JsonElement>(line); }
-            catch { continue; }
-
-            if (chunk.TryGetProperty("message", out var msg) &&
-                msg.TryGetProperty("content", out var contentEl))
+            string? line;
+            while ((line = await reader.ReadLineAsync(ct)) is not null)
             {
-                var text = contentEl.GetString();
-                if (!string.IsNullOrEmpty(text))
-                {
-                    full.Append(text);
-                    onToken(text);
-                }
-            }
+                if (string.IsNullOrWhiteSpace(line)) continue;
 
-            if (chunk.TryGetProperty("done", out var done) && done.ValueKind == JsonValueKind.True)
-                break;
+                JsonElement chunk;
+                try { chunk = JsonSerializer.Deserialize<JsonElement>(line); }
+                catch { continue; }
+
+                if (chunk.TryGetProperty("message", out var msg) &&
+                    msg.TryGetProperty("content", out var contentEl))
+                {
+                    var text = contentEl.GetString();
+                    if (!string.IsNullOrEmpty(text))
+                    {
+                        full.Append(text);
+                        onToken(text);
+                    }
+                }
+
+                if (chunk.TryGetProperty("done", out var done) && done.ValueKind == JsonValueKind.True)
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Barge-in: stop streaming and keep whatever V has said so far.
         }
 
         return full.ToString();
