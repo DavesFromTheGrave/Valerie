@@ -114,4 +114,43 @@ The old Valerie folder (with mixed ComfyUI/IshtarCore/etc.) can now be cleaned u
 
 This agent.md captures the compacted state. Future work can continue from here without needing additional tracking tickets.
 
-Last updated: June 14, 2026 (generic public release, TTS integration, spinner, custom icon, and history cleanup complete).
+Last updated: June 23, 2026 — TTS research session (see below).
+
+## TTS Research & Decision (June 23, 2026)
+
+StyleTTS2 (current local fallback) was evaluated and found unacceptable in quality. Full research was done on the current open-source and commercial landscape. Key findings:
+
+### Why StyleTTS2 is the wrong approach
+StyleTTS2 zero-shot cloning averages WAV files into a style embedding at inference time. No matter how many reference files you throw at it, the quality ceiling is low — the model was trained on LibriTTS and the style embedding is a compressed lossy representation. It cannot capture voice nuance.
+
+### The fundamental insight: 13,000 WAV files = fine-tune, not zero-shot
+Zero-shot cloning uses a reference clip to approximate voice characteristics at runtime. Fine-tuning trains the model weights on the target voice. With 13k WAVs, the quality difference is enormous — this is more data than most commercial voice studios use. Fine-tuning means the model *becomes* the voice rather than trying to imitate it.
+
+### Options ranked
+
+**Tier 1 — Fine-tune on the 13k WAV files (best possible quality):**
+- **F5-TTS** (SWivid/F5-TTS) — Flow-matching based, state-of-art quality in 2025, clean fine-tuning pipeline, can be wrapped in the same FastAPI `/tts` interface. Best all-around recommendation.
+- **Fish Speech** (fishaudio/fish-speech) — LoRA-based fine-tuning, so you only train a small adapter over the full model. Fastest training, good quality.
+- **CosyVoice2/3** (FunAudioLLM/CosyVoice) — Alibaba, top naturalness scores, SFT fine-tune supported. More GPU-hungry.
+- **Chatterbox** (Resemble AI, open-sourced 2025) — Reportedly beats ElevenLabs on some benchmarks, emotion control, fine-tunable.
+
+**Tier 2 — Better zero-shot (no training, drop-in server replacement):**
+All of these dramatically outperform StyleTTS2 zero-shot with just a 5-second reference clip:
+- F5-TTS zero-shot
+- Chatterbox zero-shot
+- Zonos (Zyphra) — adds speaking rate + emotion control
+
+**Tier 3 — Commercial:**
+- **xAI Grok TTS** — Already wired in the C# code. Just needs `GROK_TTS_API_KEY` in `.env`. Gives Ara voice (not a clone), but immediately better than StyleTTS2 for zero effort.
+- **ElevenLabs Professional Voice Clone** ($99/mo) — Upload WAVs, they fine-tune server-side. Best commercial quality. With 13k files the clone would be exceptional.
+
+### Recommended path for next session
+1. **Quickest win**: Add `GROK_TTS_API_KEY` to `.env` — existing code handles it, Ara voice is solid.
+2. **Local quality jump**: Replace `tts/tts_server_remote.py` with an F5-TTS server (same FastAPI structure, same `/tts` endpoint, same port 8190 — fully drop-in). No fine-tuning needed for a massive improvement over StyleTTS2.
+3. **Best outcome**: Fine-tune F5-TTS or Fish Speech on the 13k WAV files. Produces a model that *is* the voice.
+
+### What to ask next session
+- Are the 13k WAV files transcribed (needed for fine-tuning) or raw audio only?
+- If transcribed: go straight to F5-TTS fine-tune setup.
+- If raw audio only: run Whisper over them first to generate transcripts, then fine-tune.
+- The F5-TTS server swap (zero-shot, no training) can happen immediately regardless.
