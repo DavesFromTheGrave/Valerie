@@ -22,6 +22,8 @@ public sealed class OllamaLlmClient : ILlmClient
         _http = http;
     }
 
+    public void SetEndpoint(LlmEndpoint ep) => ActiveEndpoint = ep;
+
     public async Task<LlmEndpoint?> SelectEndpointAsync(CancellationToken ct = default)
     {
         foreach (var ep in _options.Endpoints)

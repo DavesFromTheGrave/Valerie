@@ -1,56 +1,198 @@
+using System.Diagnostics;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Valerie.Models;
 
 namespace Valerie.Services.Images;
 
-/// <summary>
-/// STUB ComfyUI image generator. The real ComfyUI workflow is not designed yet, so this does
-/// NOT call ComfyUI. It honours the IImageGenerator contract — accepts a prompt, returns a real
-/// file path — by writing a placeholder marker into the output folder. When the workflow JSON is
-/// finalized, replace the body of GenerateAsync with the real call; nothing else in the app
-/// (the selfie trigger, the console wiring) needs to change.
-/// </summary>
 public sealed class ComfyUiImageGenerator : IImageGenerator
 {
     private readonly ImageOptions _options;
+    private readonly HttpClient _http;
 
-    public ComfyUiImageGenerator(ImageOptions options)
+    public ComfyUiImageGenerator(ImageOptions options, HttpClient http)
     {
         _options = options;
+        _http = http;
     }
 
-    public Task<string> GenerateAsync(string prompt, CancellationToken ct = default)
+    public async Task EnsureComfyRunningAsync()
     {
-        Directory.CreateDirectory(_options.OutputDir);
+        try
+        {
+            var probe = await _http.GetAsync($"{_options.ComfyUrl}/system_stats");
+            if (probe.IsSuccessStatusCode) return;
+        }
+        catch { }
 
-        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        // The real implementation will return a .png produced by ComfyUI. The stub writes a .txt
-        // marker so the returned path always points at a file that actually exists.
-        var path = Path.Combine(_options.OutputDir, $"valerie_{stamp}_{Slug(prompt)}.placeholder.txt");
+        var bat = _options.LaunchBat;
+        if (string.IsNullOrWhiteSpace(bat) || !File.Exists(bat))
+        {
+            Console.WriteLine("[ComfyUI] Not running and no LaunchBat configured — photos will fail.");
+            return;
+        }
 
-        var marker =
-            "[Valerie selfie — STUB, ComfyUI not wired yet]\n" +
-            $"timestamp : {DateTime.Now:o}\n" +
-            $"prompt    : {prompt}\n" +
-            $"comfy url : {_options.ComfyUrl}\n" +
-            $"workflow  : {_options.WorkflowPath}\n\n" +
-            "TODO when the workflow JSON is ready: load the workflow template, inject this prompt\n" +
-            "plus a random seed, POST it to {ComfyUrl}/prompt, poll {ComfyUrl}/history/{id} until\n" +
-            "it completes, copy the produced image into OutputDir, and return its .png path.\n";
+        Console.WriteLine("[ComfyUI] Not detected. Launching in background...");
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c \"{bat}\"",
+                WorkingDirectory = Path.GetDirectoryName(bat)!,
+                CreateNoWindow = true,
+                UseShellExecute = false
+            });
 
-        File.WriteAllText(path, marker);
-
-        Console.ForegroundColor = ConsoleColor.DarkCyan;
-        Console.WriteLine($"[V would send a selfie here — stub wrote {path}]");
-        Console.ResetColor();
-
-        return Task.FromResult(path);
+            Console.Write("[ComfyUI] Waiting for startup");
+            for (int i = 0; i < 60; i++)
+            {
+                await Task.Delay(1000);
+                Console.Write(".");
+                try
+                {
+                    var probe = await _http.GetAsync($"{_options.ComfyUrl}/system_stats");
+                    if (probe.IsSuccessStatusCode) { Console.WriteLine(" ready."); return; }
+                }
+                catch { }
+            }
+            Console.WriteLine(" timeout — photos may fail until ComfyUI finishes loading.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ComfyUI] Failed to launch: {ex.Message}");
+        }
     }
 
-    private static string Slug(string s)
+    public async Task<string> GenerateAsync(string sceneDescription, string? filePrefix = null, CancellationToken ct = default)
     {
-        var clean = new string(s.Trim().ToLowerInvariant()
-            .Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray()).Trim('_');
-        if (clean.Length > 50) clean = clean[..50];
-        return string.IsNullOrEmpty(clean) ? "selfie" : clean;
+        var seed = Random.Shared.Next(1, int.MaxValue);
+        var positive = $"{_options.QualityPrefix}{_options.Appearance}, {sceneDescription}";
+
+        // Build a clean minimal workflow from scratch — no stale nodes from an exported JSON
+        var workflow = new System.Text.Json.Nodes.JsonObject
+        {
+            ["1"] = BuildCheckpointNode(_options.Checkpoint),
+            ["3"] = BuildLatentNode(512, 768),
+            ["4"] = BuildClipNode(positive),
+            ["5"] = BuildClipNode(_options.NegativePrompt),
+            ["6"] = BuildKSamplerNode(seed),
+            ["7"] = BuildVaeDecodeNode(),
+            ["8"] = BuildSaveNode("Valerie")
+        };
+
+        string promptId;
+        try
+        {
+            var payload = JsonSerializer.Serialize(new { prompt = workflow });
+            var body = new StringContent(payload, Encoding.UTF8, "application/json");
+            var resp = await _http.PostAsync($"{_options.ComfyUrl}/prompt", body, ct);
+            var raw = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"[ComfyUI] Submit error {(int)resp.StatusCode}: {raw}");
+                return "";
+            }
+            var json = JsonNode.Parse(raw);
+            promptId = json!["prompt_id"]!.GetValue<string>();
+        }
+        catch (Exception ex) { Console.WriteLine($"[ComfyUI] Submit failed: {ex.Message}"); return ""; }
+
+        Console.WriteLine($"[ComfyUI] Generating... (prompt {promptId[..8]})");
+
+        string? filename = null;
+        for (int i = 0; i < 300 && !ct.IsCancellationRequested; i++)
+        {
+            await Task.Delay(1000, ct);
+            try
+            {
+                var histResp = await _http.GetAsync($"{_options.ComfyUrl}/history/{promptId}", ct);
+                var hist = JsonNode.Parse(await histResp.Content.ReadAsStringAsync(ct));
+                var entry = hist?[promptId];
+                if (entry == null) continue;
+
+                var outputs = entry["outputs"];
+                var status = entry["status"];
+                bool done = outputs?["8"] != null
+                    || status?["completed"]?.GetValue<bool>() == true
+                    || status?["status_str"]?.GetValue<string>() == "success";
+
+                if (done)
+                {
+                    filename = outputs?["8"]?["images"]?[0]?["filename"]?.GetValue<string>();
+                    break;
+                }
+            }
+            catch { /* transient, keep polling */ }
+        }
+
+        if (string.IsNullOrEmpty(filename))
+        {
+            Console.WriteLine("[ComfyUI] Timed out waiting for image.");
+            return "";
+        }
+
+        var outDir = ResolvePath(_options.OutputDir);
+        Directory.CreateDirectory(outDir);
+
+        var safe = Regex.Replace(sceneDescription, @"[^a-zA-Z0-9_-]", "_").ToLowerInvariant();
+        if (safe.Length > 60) safe = safe[..60];
+        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+        var destName = filePrefix != null
+            ? $"{filePrefix}_{timestamp}.png"
+            : $"valerie_{timestamp}_{safe}.png";
+        var destPath = Path.Combine(outDir, destName);
+
+        try
+        {
+            var imageBytes = await _http.GetByteArrayAsync(
+                $"{_options.ComfyUrl}/view?filename={Uri.EscapeDataString(filename)}&type=output", ct);
+            await File.WriteAllBytesAsync(destPath, imageBytes, ct);
+            Console.WriteLine($"[Valerie sent a photo — saved to: {destName}]");
+            Process.Start(new ProcessStartInfo("explorer.exe", outDir) { UseShellExecute = false });
+        }
+        catch (Exception ex) { Console.WriteLine($"[ComfyUI] Download failed: {ex.Message}"); return ""; }
+
+        return destPath;
     }
+
+    private static string ResolvePath(string path)
+    {
+        if (Path.IsPathRooted(path)) return path;
+        // cwd is the project root when using dotnet run — check it first
+        var fromCwd = Path.GetFullPath(Path.Combine(Directory.GetCurrentDirectory(), path));
+        if (File.Exists(fromCwd) || Directory.Exists(fromCwd)) return fromCwd;
+        // walk up from BaseDirectory; trim trailing slash so GetDirectoryName actually ascends
+        var baseDir = AppDomain.CurrentDomain.BaseDirectory
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        for (int i = 0; i < 5; i++)
+        {
+            var candidate = Path.GetFullPath(Path.Combine(baseDir, path));
+            if (File.Exists(candidate) || Directory.Exists(candidate)) return candidate;
+            var parent = Path.GetDirectoryName(baseDir);
+            if (parent is null) break;
+            baseDir = parent;
+        }
+        return fromCwd;
+    }
+
+    private static JsonNode BuildCheckpointNode(string ckpt) => JsonNode.Parse(
+        $"{{\"inputs\":{{\"ckpt_name\":\"{ckpt}\"}},\"class_type\":\"CheckpointLoaderSimple\"}}")!;
+
+    private static JsonNode BuildClipNode(string text) => JsonNode.Parse(
+        $"{{\"inputs\":{{\"text\":{JsonSerializer.Serialize(text)},\"clip\":[\"1\",1]}},\"class_type\":\"CLIPTextEncode\"}}")!;
+
+    private static JsonNode BuildLatentNode(int w, int h) => JsonNode.Parse(
+        $"{{\"inputs\":{{\"width\":{w},\"height\":{h},\"batch_size\":1}},\"class_type\":\"EmptyLatentImage\"}}")!;
+
+    private static JsonNode BuildKSamplerNode(int seed) => JsonNode.Parse(
+        $"{{\"inputs\":{{\"seed\":{seed},\"steps\":28,\"cfg\":5,\"sampler_name\":\"euler\",\"scheduler\":\"normal\",\"denoise\":1,\"model\":[\"1\",0],\"positive\":[\"4\",0],\"negative\":[\"5\",0],\"latent_image\":[\"3\",0]}},\"class_type\":\"KSampler\"}}")!;
+
+    private static JsonNode BuildVaeDecodeNode() => JsonNode.Parse(
+        "{\"inputs\":{\"samples\":[\"6\",0],\"vae\":[\"1\",2]},\"class_type\":\"VAEDecode\"}")!;
+
+    private static JsonNode BuildSaveNode(string prefix) => JsonNode.Parse(
+        $"{{\"inputs\":{{\"filename_prefix\":\"{prefix}\",\"images\":[\"7\",0]}},\"class_type\":\"SaveImage\"}}")!;
 }

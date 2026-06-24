@@ -89,6 +89,18 @@ internal static class Program
             return 1;
         }
 
+        // --- User name (asked once, saved to Config/username.txt) ---
+        var namePath = Path.Combine(baseDir, "Config", "username.txt");
+        var userName = File.Exists(namePath) ? File.ReadAllText(namePath).Trim() : "";
+        if (string.IsNullOrWhiteSpace(userName))
+        {
+            Console.Write("What should I call you? ");
+            userName = Console.ReadLine()?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(userName)) userName = "You";
+            Directory.CreateDirectory(Path.GetDirectoryName(namePath)!);
+            File.WriteAllText(namePath, userName);
+        }
+
         // --- System prompt (loaded from file, editable without recompiling) ---
         var promptPath = ResolvePath("Config/system_prompt.txt", baseDir);
         var systemPrompt = LoadOrCreateSystemPrompt(promptPath);
@@ -98,8 +110,8 @@ internal static class Program
         using var ttsHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         ILlmClient llm = new OllamaLlmClient(options.Llm, llmHttp);
         ITtsClient tts = new GrokTtsClient(options.Tts, ttsHttp);
-        IImageGenerator images = new ComfyUiImageGenerator(options.ImageGen);
-
+        using var comfyHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        IImageGenerator images = new ComfyUiImageGenerator(options.ImageGen, comfyHttp);
         // --- Connect to the brain (remote GPU first, local Ollama fallback) ---
         Console.ForegroundColor = ConsoleColor.Magenta;
         Console.WriteLine("Valerie (V) — coming online.");
@@ -119,10 +131,13 @@ internal static class Program
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine($"  LLM   : {endpoint.Name} — {endpoint.Model} @ {endpoint.BaseUrl}");
         Console.WriteLine($"  Voice : {(tts.IsConfigured ? $"xAI Grok ({options.Tts.Voice})" : "TEXT-ONLY (no xAI key set)")}");
-        Console.WriteLine("  Type to chat.  /photo [description] forces a selfie.  exit quits.");
+        Console.WriteLine("  Type to chat.  /model switches brain.  /photo [description] forces a selfie.  exit quits.");
         if (!Console.IsInputRedirected)
             Console.WriteLine("  While V is speaking, press Enter (or Esc) to cut her off.");
         Console.ResetColor();
+        Console.WriteLine();
+
+        await images.EnsureComfyRunningAsync();
         Console.WriteLine();
 
         var conversation = new List<ChatMessage> { new("system", systemPrompt) };
@@ -130,22 +145,59 @@ internal static class Program
         while (true)
         {
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write("You: ");
+            Console.Write($"{userName}: ");
             Console.ResetColor();
 
             var input = Console.ReadLine();
             if (input is null) break;
+
+            // Paste handling: give the buffer 50ms to fill, then drain any additional lines
+            if (!Console.IsInputRedirected)
+            {
+                await Task.Delay(50);
+                while (Console.KeyAvailable)
+                {
+                    var extra = Console.ReadLine();
+                    if (extra is not null) input += "\n" + extra;
+                }
+            }
+
             input = input.Trim();
             if (input.Length == 0) continue;
             if (input.Equals("exit", StringComparison.OrdinalIgnoreCase) ||
                 input.Equals("quit", StringComparison.OrdinalIgnoreCase)) break;
+
+            // Explicit command: /model — list or switch active LLM endpoint
+            if (input.StartsWith("/model", StringComparison.OrdinalIgnoreCase))
+            {
+                var endpoints = options.Llm.Endpoints;
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                for (int i = 0; i < endpoints.Count; i++)
+                {
+                    var ep = endpoints[i];
+                    var active = ep == llm.ActiveEndpoint ? " [active]" : "";
+                    Console.WriteLine($"  {i + 1}. {ep.Name} — {ep.Model}{active}");
+                }
+                Console.Write($"  Select [1-{endpoints.Count}] or Enter to cancel: ");
+                Console.ResetColor();
+                var pick = Console.ReadLine()?.Trim();
+                if (int.TryParse(pick, out var idx) && idx >= 1 && idx <= endpoints.Count)
+                {
+                    llm.SetEndpoint(endpoints[idx - 1]);
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine($"  Switched to: {llm.ActiveEndpoint!.Name} — {llm.ActiveEndpoint.Model}");
+                    Console.ResetColor();
+                }
+                continue;
+            }
 
             // Explicit command: /photo [optional description]
             if (input.StartsWith("/photo", StringComparison.OrdinalIgnoreCase))
             {
                 var desc = input.Length > 6 ? input[6..].Trim() : "";
                 if (desc.Length == 0) desc = "a casual selfie of Valerie, smiling at the camera";
-                await images.GenerateAsync(desc);
+                var model = Regex.Replace(llm.ActiveEndpoint?.Model ?? "unknown", @"[^a-zA-Z0-9_-]", "_");
+                await images.GenerateAsync(desc, $"dave_{model}");
                 continue;
             }
 
@@ -239,7 +291,11 @@ internal static class Program
             }
         }
 
-        Console.WriteLine("V: ...talk soon.");
+        Console.WriteLine();
+        Console.ForegroundColor = ConsoleColor.Magenta;
+        Console.Write("V: ");
+        Console.ResetColor();
+        Console.WriteLine("...talk soon.");
         return 0;
     }
 

@@ -37,5 +37,17 @@ public sealed class ImageOptions
 {
     public string ComfyUrl { get; set; } = "http://127.0.0.1:8188";
     public string OutputDir { get; set; } = "selfies";
-    public string WorkflowPath { get; set; } = "workflows/valerie_selfie.placeholder.json";
+    public string WorkflowPath { get; set; } = "workflows/valerie_selfie.json";
+    public string LaunchBat { get; set; } = "";
+    public string Checkpoint { get; set; } = "cyberrealisticPony_v180Coreshift.safetensors";
+    public string QualityPrefix { get; set; } = "score_9, score_8_up, score_7_up, source_photo, ";
+    public string Appearance { get; set; } =
+        "slender 5'1\" nubile young woman, vibrant fiery red hair in big loose waves, " +
+        "striking bright blue eyes with gold flecks and dark blue ring, " +
+        "pale ivory skin with light red and brown freckles on nose cheeks shoulders and chest, " +
+        "oval face with small pointed chin, full light pink lips, " +
+        "high detail skin texture, cinematic lighting, photorealistic";
+    public string NegativePrompt { get; set; } =
+        "worst quality, low quality, blurry, deformed, ugly, bad anatomy, extra limbs, " +
+        "watermark, text, signature, duplicate, mutation, out of frame";
 }
