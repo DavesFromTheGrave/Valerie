@@ -6,6 +6,11 @@ obj/
 secrets/
 *.key
 
+# V's persona is private — it lives in the immutable M:\V-Prompts vault, never in the repo.
+# The live system prompt (copied out of the vault) and any modelfiles that embed it stay local.
+Config/system_prompt.txt
+modelfiles/
+
 # Local config overrides (non-secret) / misc
 appsettings.Local.json
 .env

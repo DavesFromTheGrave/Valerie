@@ -61,6 +61,28 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(stored)) options.Tts.ApiKey = stored;
         }
 
+        // First run: if there's still no key and we have a real console, ask for it once and
+        // store it (DPAPI-encrypted) so she never asks again. Press Enter to skip → text-only.
+        if (string.IsNullOrWhiteSpace(options.Tts.ApiKey) && SecretStore.IsSupported && !Console.IsInputRedirected)
+        {
+            Console.WriteLine("No voice key found yet.");
+            var entered = ReadSecret("Paste your xAI TTS key (or just press Enter to skip, text-only): ");
+            if (!string.IsNullOrWhiteSpace(entered))
+            {
+                options.Tts.ApiKey = entered;
+                try
+                {
+                    SecretStore.Save(secretPath, entered);
+                    Console.WriteLine("Got it — saved encrypted. She won't ask again.");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"(Couldn't save it for next time: {ex.Message}. Using it just for this session.)");
+                }
+            }
+            Console.WriteLine();
+        }
+
         if (options.Llm.Endpoints.Count == 0)
         {
             Console.WriteLine("No LLM endpoints configured in appsettings.json (Llm:Endpoints). Exiting.");
@@ -320,8 +342,16 @@ internal static class Program
         {
             var key = Console.ReadKey(intercept: true);
             if (key.Key == ConsoleKey.Enter) { Console.WriteLine(); break; }
-            if (key.Key == ConsoleKey.Backspace) { if (sb.Length > 0) sb.Length--; continue; }
-            if (!char.IsControl(key.KeyChar)) sb.Append(key.KeyChar);
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (sb.Length > 0) { sb.Length--; Console.Write("\b \b"); }
+                continue;
+            }
+            if (!char.IsControl(key.KeyChar))
+            {
+                sb.Append(key.KeyChar);
+                Console.Write('*');   // visible feedback so it doesn't look frozen
+            }
         }
         return sb.ToString().Trim();
     }
