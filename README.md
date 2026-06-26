@@ -107,11 +107,13 @@ To prepare the local TTS server:
 
 Both Ollama and StyleTTS2 run on the remote GPU instance. Yggdrasil connects via SSH tunnels and treats both as localhost services — no `.env` changes needed.
 
+Find your instance IP and SSH port on the [Vast.ai console](https://vast.ai/console/instances/) under "Connect" for your running instance.
+
 ### 1. Upload and run the setup script
 
 ```powershell
-scp -P 20931 tts/setup_remote_tts.sh root@175.155.64.149:/workspace/
-ssh -p 20931 root@175.155.64.149 "bash /workspace/setup_remote_tts.sh"
+scp -P <YOUR_PORT> tts/setup_remote_tts.sh root@<YOUR_VAST_IP>:/workspace/
+ssh -p <YOUR_PORT> root@<YOUR_VAST_IP> "bash /workspace/setup_remote_tts.sh"
 ```
 
 Installs Ollama, clones StyleTTS2, downloads the LibriTTS multispeaker checkpoint, and starts both services.
@@ -119,8 +121,8 @@ Installs Ollama, clones StyleTTS2, downloads the LibriTTS multispeaker checkpoin
 ### 2. Upload the Ollama modelfile and create the model
 
 ```powershell
-scp -P 20931 personal/modelfiles/nsfw-v-9b.modelfile root@175.155.64.149:/workspace/
-ssh -p 20931 root@175.155.64.149 "ollama create revenant/nsfw-v-9b:latest -f /workspace/nsfw-v-9b.modelfile"
+scp -P <YOUR_PORT> personal/modelfiles/nsfw-v-9b.modelfile root@<YOUR_VAST_IP>:/workspace/
+ssh -p <YOUR_PORT> root@<YOUR_VAST_IP> "ollama create revenant/nsfw-v-9b:latest -f /workspace/nsfw-v-9b.modelfile"
 ```
 
 The base model weights will be pulled automatically during `ollama create`.
@@ -128,8 +130,8 @@ The base model weights will be pulled automatically during `ollama create`.
 ### 3. Upload voice reference clips
 
 ```powershell
-scp -P 20931 -r tts\voice_data\cp2077_femV\* root@175.155.64.149:/workspace/voice_data/
-ssh -p 20931 root@175.155.64.149 "bash /workspace/restart_tts.sh"
+scp -P <YOUR_PORT> -r tts\voice_data\cp2077_femV\* root@<YOUR_VAST_IP>:/workspace/voice_data/
+ssh -p <YOUR_PORT> root@<YOUR_VAST_IP> "bash /workspace/restart_tts.sh"
 ```
 
 `restart_tts.sh` is written by the setup script. It kills the running TTS server and relaunches it so the voice embedding is computed from the uploaded clips.
@@ -137,7 +139,7 @@ ssh -p 20931 root@175.155.64.149 "bash /workspace/restart_tts.sh"
 ### 4. Open SSH tunnels (Yggdrasil)
 
 ```powershell
-ssh -p 20931 root@175.155.64.149 -L 11434:localhost:11434 -L 8190:localhost:8190 -N
+ssh -p <YOUR_PORT> root@<YOUR_VAST_IP> -L 11434:localhost:11434 -L 8190:localhost:8190 -N
 ```
 
 | Port | Service |
