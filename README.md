@@ -119,8 +119,8 @@ Installs Ollama, clones StyleTTS2, downloads the LibriTTS multispeaker checkpoin
 ### 2. Upload the Ollama modelfile and create the model
 
 ```powershell
-scp -P 20931 personal/modelfiles/nsfw-v-9b.modelfile root@175.155.64.149:/workspace/
-ssh -p 20931 root@175.155.64.149 "ollama create revenant/nsfw-v-9b:latest -f /workspace/nsfw-v-9b.modelfile"
+scp -P <SSH_PORT> personal/modelfiles/nsfw-v-9b.modelfile root@<VAST_IP>:/workspace/
+ssh -p <SSH_PORT> <VAST_IP> "ollama create revenant/nsfw-v-9b:latest -f /workspace/nsfw-v-9b.modelfile"
 ```
 
 The base model weights will be pulled automatically during `ollama create`.
@@ -128,8 +128,8 @@ The base model weights will be pulled automatically during `ollama create`.
 ### 3. Upload voice reference clips
 
 ```powershell
-scp -P 20931 -r tts\voice_data\cp2077_femV\* root@175.155.64.149:/workspace/voice_data/
-ssh -p 20931 root@175.155.64.149 "bash /workspace/restart_tts.sh"
+scp -P <SSH_PORT> -r tts\voice_data\cp2077_femV\* root@<VAST_IP>:/workspace/voice_data/
+ssh -p <SSH_PORT> <VAST_IP> "bash /workspace/restart_tts.sh"
 ```
 
 `restart_tts.sh` is written by the setup script. It kills the running TTS server and relaunches it so the voice embedding is computed from the uploaded clips.
