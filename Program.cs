@@ -177,7 +177,7 @@ namespace Valerie
             }
 
             // Dynamic model selection based on local Ollama tags
-            var (activeModel, enableThinking) = await SelectModelPromptAsync();
+            (activeModel, enableThinking) = await SelectModelPromptAsync();
 
             // Existing text core initialization (now after the launcher/boot)
             Console.WriteLine("Initializing Valerie (text generation core - audio native path)...");
@@ -1510,9 +1510,7 @@ namespace Valerie
                         Arguments = $"/c \"{batPath}\"",
                         WorkingDirectory = imgGenDir,
                         CreateNoWindow = true,
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true
+                        UseShellExecute = false
                     };
                     Process.Start(comfyInfo);
 
