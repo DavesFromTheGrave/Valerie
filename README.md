@@ -48,6 +48,21 @@ dotnet run
 
 Chat by typing. `/photo [description]` forces a selfie. `exit` quits.
 
+## Live voice (talk back)
+
+Full duplex mic ↔ **Ara** via xAI Realtime. Uses `XAI_VOICE_API_KEY` from the DPAPI vault
+`A:\env\xai-keys.dpapi` (Realtime-labeled key). Falls back to Valerie full-endpoint key if needed.
+
+```powershell
+cd M:\Projects\Valerie
+dotnet run -- voice
+```
+
+Speak naturally. Server VAD handles turns. **Ctrl+C** hangs up.
+
+Config knobs in `appsettings.json` → `Realtime` (`Model`, `Voice`, `SampleRate`).
+Persona comes from `Config/system_prompt.txt` with a short voice-mode prefix.
+
 ## System prompt
 
 `Config/system_prompt.txt` — V's persona. Edit it any time; it's re-read on launch, no rebuild needed.

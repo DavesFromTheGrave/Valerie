@@ -15,6 +15,7 @@ modelfiles/
 appsettings.Local.json
 .env
 *.user
+*.log
 
 # Generated selfies (keep the folder, ignore the images)
 selfies/*
@@ -24,3 +25,19 @@ selfies/*
 Thumbs.db
 .DS_Store
 Config/username.txt
+
+#Documentation
+docs/
+
+# Local TTS (F5-TTS): virtualenv, model cache, dataset, checkpoints, samples — all generated/huge.
+# This is the 250k+ untracked files: .venv alone is ~54k, dataset is 11k WAVs.
+local-tts/.venv/
+local-tts/.cache/
+local-tts/dataset/
+local-tts/samples/
+local-tts/ckpts/
+
+# V's voice-clone material (derived from the private raw clips) stays out of git, like the persona.
+local-tts/ref/
+voice_ref*
+voice_raw*

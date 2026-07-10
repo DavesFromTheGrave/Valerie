@@ -7,7 +7,7 @@ namespace Valerie.Services.Llm;
 /// <summary>
 /// Talks to an Ollama-compatible /api/chat endpoint. Supports an ordered list of endpoints
 /// (e.g. a remote Vast.ai GPU first, then a local Ollama as fallback) and automatically fails
-/// over to the next healthy one. Nothing about the endpoint is hardcoded — it all comes from config.
+/// over to the next healthy one. If nothing answers, boots local Ollama instead of dying.
 /// </summary>
 public sealed class OllamaLlmClient : ILlmClient
 {
@@ -53,19 +53,62 @@ public sealed class OllamaLlmClient : ILlmClient
         }
     }
 
-    public async Task<string> StreamChatAsync(IReadOnlyList<ChatMessage> messages, Action<string> onToken, CancellationToken ct = default)
+    public async Task<string> StreamChatAsync(
+        IReadOnlyList<ChatMessage> messages,
+        Action<string> onToken,
+        CancellationToken ct = default)
     {
-        // Ensure a live endpoint; re-probe (failover) if the active one has gone away.
-        if (ActiveEndpoint is null || !await IsHealthyAsync(ActiveEndpoint, ct))
-        {
-            var ep = await SelectEndpointAsync(ct);
-            if (ep is null)
-                throw new InvalidOperationException(
-                    "No LLM endpoint is reachable. Checked: " +
-                    string.Join(", ", _options.Endpoints.Select(e => $"{e.Name} @ {e.BaseUrl}")) + ".");
-        }
+        await EnsureEndpointAsync(ct);
 
         var endpoint = ActiveEndpoint!;
+        try
+        {
+            return await StreamOnceAsync(endpoint, messages, onToken, ct);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            // Mid-session brain died — restart local Ollama once and retry.
+            Console.WriteLine($"[brain dropped: {ex.Message}] — restarting Ollama…");
+            var localUrl = OllamaBootstrap.IsLocalUrl(endpoint.BaseUrl)
+                ? endpoint.BaseUrl
+                : OllamaBootstrap.DefaultBaseUrl;
+            await OllamaBootstrap.EnsureRunningAsync(localUrl, TimeSpan.FromSeconds(45),
+                s => Console.WriteLine($"  {s}"));
+            await EnsureEndpointAsync(ct);
+            return await StreamOnceAsync(ActiveEndpoint!, messages, onToken, ct);
+        }
+    }
+
+    private async Task EnsureEndpointAsync(CancellationToken ct)
+    {
+        if (ActiveEndpoint is not null && await IsHealthyAsync(ActiveEndpoint, ct))
+            return;
+
+        var ep = await SelectEndpointAsync(ct);
+        if (ep is null)
+        {
+            var localUrl = _options.Endpoints
+                .Select(e => e.BaseUrl)
+                .FirstOrDefault(OllamaBootstrap.IsLocalUrl) ?? OllamaBootstrap.DefaultBaseUrl;
+
+            Console.WriteLine("[brain cold — starting local Ollama…]");
+            await OllamaBootstrap.EnsureRunningAsync(localUrl, TimeSpan.FromSeconds(60),
+                s => Console.WriteLine($"  {s}"));
+            ep = await SelectEndpointAsync(ct);
+        }
+
+        if (ep is null)
+            throw new InvalidOperationException(
+                "No LLM endpoint is reachable (and local Ollama didn't come up). Checked: " +
+                string.Join(", ", _options.Endpoints.Select(e => $"{e.Name} @ {e.BaseUrl}")) + ".");
+    }
+
+    private async Task<string> StreamOnceAsync(
+        LlmEndpoint endpoint,
+        IReadOnlyList<ChatMessage> messages,
+        Action<string> onToken,
+        CancellationToken ct)
+    {
         var payload = new
         {
             model = endpoint.Model,
@@ -80,7 +123,12 @@ public sealed class OllamaLlmClient : ILlmClient
         };
 
         using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"Ollama returned {(int)response.StatusCode} {response.StatusCode}: {Truncate(body, 200)}");
+        }
 
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var reader = new StreamReader(stream);
@@ -114,9 +162,12 @@ public sealed class OllamaLlmClient : ILlmClient
         }
         catch (OperationCanceledException)
         {
-            // Barge-in: stop streaming and keep whatever V has said so far.
+            // Barge-in: keep whatever V said so far.
         }
 
         return full.ToString();
     }
+
+    private static string Truncate(string s, int n) =>
+        s.Length <= n ? s : s[..n] + "…";
 }

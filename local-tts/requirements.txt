@@ -1,0 +1,13 @@
+# Valerie local TTS (F5-TTS) — install torch SEPARATELY first with the CUDA index:
+#   .venv\Scripts\python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# then: .venv\Scripts\python -m pip install -r requirements.txt
+f5-tts
+fastapi
+uvicorn
+soundfile
+# ffmpeg is a SYSTEM dependency (used for MP3 encode) — already installed on this machine.
+#
+# AFTER installing, remove torchcodec so torchaudio uses the soundfile backend:
+#   .venv\Scripts\python -m pip uninstall -y torchcodec
+# (torchcodec needs FFmpeg *shared* DLLs, which the static gyan.dev build doesn't ship —
+#  see README.md "torchcodec gotcha". Without this, /tts fails with 500 Could not load libtorchcodec.)
