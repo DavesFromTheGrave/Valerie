@@ -41,3 +41,7 @@ local-tts/ckpts/
 local-tts/ref/
 voice_ref*
 voice_raw*
+
+# memory cache for the TTS model (generated, huge)
+v-Memory/*
+superm0d/
