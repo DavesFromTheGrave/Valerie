@@ -185,8 +185,11 @@ internal static class Program
         var grokImages = string.IsNullOrWhiteSpace(options.GrokImage.ApiKey)
             ? null
             : new GrokImageGenerator(options.GrokImage, options.ImageGen, xaiMediaHttp);
+        // Comfy gets a hook to free the local LLM's VRAM before it loads the checkpoint — the 8GB
+        // LLM↔SDXL handoff. Harmless when the brain runs on a remote GPU (the hook no-ops).
         var images = new ImageBackendSwitcher(
-            new ComfyUiImageGenerator(options.ImageGen, comfyHttp), grokImages, options.ImageGen.Backend);
+            new ComfyUiImageGenerator(options.ImageGen, comfyHttp, ct => llm.ReleaseVramAsync(ct)),
+            grokImages, options.ImageGen.Backend);
         IVideoGenerator video = new GrokVideoGenerator(options.VideoGen, xaiMediaHttp);
         // --- Connect to the brain (remote GPU first, local Ollama fallback) ---
         Console.ForegroundColor = ConsoleColor.Magenta;

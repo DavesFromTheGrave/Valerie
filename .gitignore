@@ -36,6 +36,8 @@ local-tts/.cache/
 local-tts/dataset/
 local-tts/samples/
 local-tts/ckpts/
+# trained voice checkpoints (3.2 GB each) — kept on disk, never in git
+local-tts/keepers/
 
 # V's voice-clone material (derived from the private raw clips) stays out of git, like the persona.
 local-tts/ref/

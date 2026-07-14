@@ -168,6 +168,57 @@ public sealed class OllamaLlmClient : ILlmClient
         return full.ToString();
     }
 
+    /// <summary>
+    /// Unload the local model from VRAM (Ollama keep_alive:0) and wait until it's actually gone,
+    /// so a local ComfyUI selfie has room on an 8GB card. Remote endpoints are left alone — their
+    /// GPU doesn't share this machine's memory. The model reloads on the next chat turn (~seconds).
+    /// </summary>
+    public async Task ReleaseVramAsync(CancellationToken ct = default)
+    {
+        var ep = ActiveEndpoint;
+        if (ep is null || !OllamaBootstrap.IsLocalUrl(ep.BaseUrl))
+            return; // remote GPU (or no endpoint) — nothing to free on this machine.
+
+        var baseUrl = ep.BaseUrl.TrimEnd('/');
+        try
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"[freeing the GPU for a photo — brain unloads, reloads after]");
+            Console.ResetColor();
+
+            // keep_alive:0 tells Ollama to evict this model from VRAM right after the call.
+            var payload = new { model = ep.Model, keep_alive = 0 };
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/generate")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            };
+            using var resp = await _http.SendAsync(req, ct);
+
+            // Confirm it actually left VRAM before we let the image pipeline grab the card.
+            for (int i = 0; i < 20 && !ct.IsCancellationRequested; i++)
+            {
+                try
+                {
+                    using var ps = await _http.GetAsync($"{baseUrl}/api/ps", ct);
+                    var body = await ps.Content.ReadAsStringAsync(ct);
+                    var doc = JsonSerializer.Deserialize<JsonElement>(body);
+                    var stillResident = doc.TryGetProperty("models", out var models)
+                        && models.ValueKind == JsonValueKind.Array
+                        && models.EnumerateArray().Any(m =>
+                            m.TryGetProperty("name", out var nm) && nm.GetString() == ep.Model);
+                    if (!stillResident) return; // freed
+                }
+                catch { /* transient — keep polling */ }
+                await Task.Delay(500, ct);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[vram] couldn't unload the brain (continuing anyway): {ex.Message}");
+        }
+    }
+
     private static string Truncate(string s, int n) =>
         s.Length <= n ? s : s[..n] + "…";
 }

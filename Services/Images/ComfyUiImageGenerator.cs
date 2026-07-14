@@ -11,11 +11,16 @@ public sealed class ComfyUiImageGenerator : IImageGenerator
 {
     private readonly ImageOptions _options;
     private readonly HttpClient _http;
+    private readonly Func<CancellationToken, Task>? _releaseLlmVram;
 
-    public ComfyUiImageGenerator(ImageOptions options, HttpClient http)
+    /// <param name="releaseLlmVram">Optional hook invoked before generation to free the LLM's GPU
+    /// memory (the 8GB LLM↔SDXL handoff). Null = no handoff (e.g. plenty of VRAM).</param>
+    public ComfyUiImageGenerator(ImageOptions options, HttpClient http,
+        Func<CancellationToken, Task>? releaseLlmVram = null)
     {
         _options = options;
         _http = http;
+        _releaseLlmVram = releaseLlmVram;
     }
 
     public async Task EnsureComfyRunningAsync()
@@ -68,6 +73,15 @@ public sealed class ComfyUiImageGenerator : IImageGenerator
 
     public async Task<string> GenerateAsync(string sceneDescription, string? filePrefix = null, CancellationToken ct = default)
     {
+        // 8GB handoff: free the LLM's VRAM before we load the 6.9GB checkpoint (no-op if the brain
+        // is remote or not loaded). Without this, the model and SDXL can't both fit and gen OOMs.
+        if (_releaseLlmVram is not null)
+        {
+            try { await _releaseLlmVram(ct); } catch { /* try to generate anyway */ }
+        }
+
+        try
+        {
         var seed = Random.Shared.Next(1, int.MaxValue);
         var positive = $"{_options.QualityPrefix}{_options.Appearance}, {sceneDescription}";
 
@@ -156,6 +170,24 @@ public sealed class ComfyUiImageGenerator : IImageGenerator
         catch (Exception ex) { Console.WriteLine($"[ComfyUI] Download failed: {ex.Message}"); return ""; }
 
         return destPath;
+        }
+        finally
+        {
+            // Hand the GPU back: drop ComfyUI's models so the brain can reload on the next message.
+            await FreeComfyVramAsync();
+        }
+    }
+
+    /// <summary>Ask ComfyUI to release its VRAM after a selfie so the LLM can reload cleanly.</summary>
+    private async Task FreeComfyVramAsync()
+    {
+        try
+        {
+            var body = new StringContent("{\"unload_models\":true,\"free_memory\":true}",
+                Encoding.UTF8, "application/json");
+            using var _ = await _http.PostAsync($"{_options.ComfyUrl}/free", body, CancellationToken.None);
+        }
+        catch { /* best effort — --disable-smart-memory also frees on its own */ }
     }
 
     private static string ResolvePath(string path)

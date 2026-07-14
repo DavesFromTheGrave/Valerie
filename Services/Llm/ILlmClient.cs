@@ -16,4 +16,10 @@ public interface ILlmClient
     /// <summary>Stream a chat completion. Each content token is handed to <paramref name="onToken"/>
     /// as it arrives; the full assembled assistant text is returned.</summary>
     Task<string> StreamChatAsync(IReadOnlyList<ChatMessage> messages, Action<string> onToken, CancellationToken ct = default);
+
+    /// <summary>Evict the model from GPU memory so something else (local ComfyUI) can use the card.
+    /// No-op when the active endpoint is remote (its GPU doesn't contend with this machine). The
+    /// model reloads automatically on the next <see cref="StreamChatAsync"/>. On an 8GB GPU this is
+    /// what lets the LLM and local SDXL image-gen coexist.</summary>
+    Task ReleaseVramAsync(CancellationToken ct = default);
 }
